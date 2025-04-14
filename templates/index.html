@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Packet Sniffer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .packet-list {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 20px;
+        }
+        .packet-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .packet-item:last-child {
+            border-bottom: none;
+        }
+        .protocol-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        .protocol-tcp { background-color: #e3f2fd; color: #1976d2; }
+        .protocol-udp { background-color: #f3e5f5; color: #7b1fa2; }
+        .protocol-icmp { background-color: #e8f5e9; color: #388e3c; }
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 1200px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: #000;
+        }
+        .show-more-btn {
+            background-color: #1976d2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .show-more-btn:hover {
+            background-color: #1565c0;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .detailed-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .detailed-table th, .detailed-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .detailed-table th {
+            background-color: #f5f5f5;
+            font-weight: bold;
+        }
+        .detailed-table tr:hover {
+            background-color: #f9f9f9;
+        }
+        .packet-list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #eee;
+        }
+        .packet-list-header h2 {
+            margin: 0;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Network Packet Sniffer</h1>
+            <p>Real-time network traffic monitoring</p>
+        </div>
+
+        <div class="stats-container">
+            <div class="stat-card">
+                <h3>Total Packets</h3>
+                <p id="total-packets">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>HTTP Traffic</h3>
+                <p id="http-packets">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>HTTPS Traffic</h3>
+                <p id="https-packets">0</p>
+            </div>
+            <div class="stat-card">
+                <h3>DNS Traffic</h3>
+                <p id="dns-packets">0</p>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="protocolChart"></canvas>
+        </div>
+
+        <div class="packet-list">
+            <div class="packet-list-header">
+                <h2>Recent Packets</h2>
+                <button class="show-more-btn" onclick="openModal()">📊 Show Detailed View</button>
+            </div>
+            <div id="packets"></div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="packetModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2>Detailed Packet Information</h2>
+            <table class="detailed-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Protocol</th>
+                        <th>Source IP</th>
+                        <th>Source Port</th>
+                        <th>Destination IP</th>
+                        <th>Destination Port</th>
+                        <th>Length</th>
+                    </tr>
+                </thead>
+                <tbody id="detailed-packets">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let protocolChart;
+        let recentPackets = [];
+
+        // Initialize chart
+        const ctx = document.getElementById('protocolChart').getContext('2d');
+        protocolChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['HTTP', 'HTTPS', 'DNS', 'Other'],
+                datasets: [{
+                    data: [0, 0, 0, 0],
+                    backgroundColor: [
+                        '#1976d2',
+                        '#388e3c',
+                        '#7b1fa2',
+                        '#757575'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Traffic Distribution'
+                    }
+                }
+            }
+        });
+
+        // Handle new packets
+        socket.on('new_packet', (packet) => {
+            const packetsDiv = document.getElementById('packets');
+            const packetElement = document.createElement('div');
+            packetElement.className = 'packet-item';
+            
+            const protocolClass = packet.protocol.toLowerCase();
+            packetElement.innerHTML = `
+                <span class="protocol-badge protocol-${protocolClass}">${packet.protocol}</span>
+                <span>${packet.src_ip}:${packet.src_port} → ${packet.dst_ip}:${packet.dst_port}</span>
+                <span style="float: right; color: #666;">${packet.timestamp}</span>
+            `;
+            
+            packetsDiv.insertBefore(packetElement, packetsDiv.firstChild);
+            
+            // Keep only the last 100 packets
+            if (packetsDiv.children.length > 100) {
+                packetsDiv.removeChild(packetsDiv.lastChild);
+            }
+
+            // Store packet in recent packets array
+            recentPackets.unshift(packet);
+            if (recentPackets.length > 100) {
+                recentPackets.pop();
+            }
+        });
+
+        // Handle statistics updates
+        socket.on('update_statistics', (stats) => {
+            document.getElementById('total-packets').textContent = stats.total_packets;
+            document.getElementById('http-packets').textContent = stats.categories.http;
+            document.getElementById('https-packets').textContent = stats.categories.https;
+            document.getElementById('dns-packets').textContent = stats.categories.dns;
+
+            // Update chart
+            protocolChart.data.datasets[0].data = [
+                stats.categories.http,
+                stats.categories.https,
+                stats.categories.dns,
+                stats.categories.other
+            ];
+            protocolChart.update();
+        });
+
+        // Modal functions
+        function openModal() {
+            document.getElementById('packetModal').style.display = 'block';
+            updateDetailedTable();
+        }
+
+        function closeModal() {
+            document.getElementById('packetModal').style.display = 'none';
+        }
+
+        function updateDetailedTable() {
+            const tbody = document.getElementById('detailed-packets');
+            tbody.innerHTML = '';
+            
+            // Show the 30 most recent packets
+            recentPackets.slice(0, 30).forEach(packet => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${packet.timestamp}</td>
+                    <td><span class="protocol-badge protocol-${packet.protocol.toLowerCase()}">${packet.protocol}</span></td>
+                    <td>${packet.src_ip}</td>
+                    <td>${packet.src_port || 'N/A'}</td>
+                    <td>${packet.dst_ip}</td>
+                    <td>${packet.dst_port || 'N/A'}</td>
+                    <td>${packet.length} bytes</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('packetModal');
+            if (event.target == modal) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
