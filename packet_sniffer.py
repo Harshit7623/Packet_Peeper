@@ -1,9 +1,10 @@
 import sys
 import threading
-from scapy.all import sniff, IP, TCP, UDP, ICMP, conf
+from scapy.all import sniff, IP, TCP, UDP, ICMP, conf, get_if_list, get_if_addr, get_if_hwaddr
 from datetime import datetime
 import json
 import os
+import time
 
 class PacketSniffer:
     def __init__(self):
@@ -15,6 +16,8 @@ class PacketSniffer:
             'other': []
         }
         self.callback = None
+        self.devices = {}
+        self.device_stats = {}
         print("PacketSniffer initialized")
         
         # Check if running with admin privileges
@@ -32,6 +35,54 @@ class PacketSniffer:
             print("Please run the program as administrator.")
             print("On Windows: Right-click and select 'Run as administrator'")
             print("On Linux: Use 'sudo' before the command")
+
+        # Initialize device discovery
+        self.discover_devices()
+
+    def discover_devices(self):
+        """Discover network interfaces and their details"""
+        try:
+            interfaces = get_if_list()
+            for iface in interfaces:
+                try:
+                    ip_addr = get_if_addr(iface)
+                    mac_addr = get_if_hwaddr(iface)
+                    
+                    self.devices[iface] = {
+                        'id': len(self.devices) + 1,
+                        'name': iface,
+                        'type': 'Wireless' if 'wlan' in iface.lower() or 'wi-fi' in iface.lower() else 'Wired',
+                        'status': 'Active',
+                        'ipAddress': ip_addr,
+                        'macAddress': mac_addr,
+                        'packetsCaptured': 0,
+                        'lastActive': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    
+                    self.device_stats[iface] = {
+                        'packets': 0,
+                        'bytes': 0,
+                        'last_seen': time.time()
+                    }
+                except Exception as e:
+                    print(f"Error getting details for interface {iface}: {str(e)}")
+        except Exception as e:
+            print(f"Error discovering devices: {str(e)}")
+
+    def update_device_stats(self, iface, packet):
+        """Update statistics for a device"""
+        if iface in self.device_stats:
+            self.device_stats[iface]['packets'] += 1
+            self.device_stats[iface]['bytes'] += len(packet)
+            self.device_stats[iface]['last_seen'] = time.time()
+            
+            # Update device info
+            self.devices[iface]['packetsCaptured'] = self.device_stats[iface]['packets']
+            self.devices[iface]['lastActive'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    def get_devices(self):
+        """Return the current list of devices"""
+        return list(self.devices.values())
 
     def set_callback(self, callback):
         self.callback = callback
@@ -88,6 +139,12 @@ class PacketSniffer:
 
             self.captured_packets.append(packet_info)
             self.categorize_packet(packet_info)
+            
+            # Update device statistics
+            if packet_info['src_ip']:
+                for iface in self.devices:
+                    if self.devices[iface]['ipAddress'] == packet_info['src_ip']:
+                        self.update_device_stats(iface, packet)
 
             if self.callback:
                 self.callback(packet_info)
