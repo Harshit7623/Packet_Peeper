@@ -5,6 +5,8 @@
 [![React 19](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Electron](https://img.shields.io/badge/Electron-28%2B-47848F.svg)](https://www.electronjs.org/)
 
+> **📌 Repository Note**: This repository was migrated from a local development environment on January 25, 2026. The original commit history was consolidated during migration. This project was developed over several weeks with iterative improvements. See [DEVELOPMENT_HISTORY.md](DEVELOPMENT_HISTORY.md) for detailed development timeline and proof of original work.
+
 **Packet Peeper** is a real-time network security monitor designed for **non-technical home users**. It detects network threats in real-time and uses AI to explain what's happening in plain English, with step-by-step remediation guidance.
 
 ![Dashboard Preview](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)
