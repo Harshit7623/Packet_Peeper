@@ -12,6 +12,8 @@ build/
 # Logs
 logs/
 *.log
+sniffer_*.txt
+*_log.txt
 
 # Environment
 .env
