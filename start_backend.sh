@@ -44,12 +44,13 @@ else
 fi
 
 pip install --upgrade pip -q
-pip install -r requirements.txt -q
+pip install -r backend/requirements.txt -q
 echo -e "${GREEN}✓${NC} Dependencies installed"
 echo ""
 
 # Step 4: Run verification
 echo -e "${BLUE}[4/5]${NC} Verifying installation..."
+cd backend
 python verify_backend.py
 VERIFY_RESULT=$?
 echo ""

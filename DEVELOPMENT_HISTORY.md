@@ -137,10 +137,10 @@ This repository was **migrated** from a local development environment on **Janua
 
 | File | Purpose | Complexity |
 |------|---------|------------|
-| `network_security_monitor.py` | 16 attack detection algorithms | High |
-| `services/ai_assistant.py` | Multi-provider AI with fallbacks | High |
-| `packet_sniffer.py` | Scapy packet capture engine | High |
-| `app.py` | Flask + Socket.IO backend | Medium |
+| `backend/network_security_monitor.py` | 16 attack detection algorithms | High |
+| `backend/services/ai_assistant.py` | Multi-provider AI with fallbacks | High |
+| `backend/packet_sniffer.py` | Scapy packet capture engine | High |
+| `backend/app.py` | Flask + Socket.IO backend | Medium |
 | `frontend/src/store/monitorStore.ts` | Zustand state management | Medium |
 | `frontend/src/components/AIAssistant.tsx` | AI help UI component | Medium |
 | `attack_tests/run_all_attacks.py` | Test suite for detection | Medium |

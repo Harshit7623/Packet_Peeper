@@ -85,6 +85,7 @@ start_all.bat
 
 Terminal 1 - Backend (Run as Administrator):
 ```bash
+cd backend
 python app.py Wi-Fi
 ```
 
@@ -133,6 +134,7 @@ export OPENAI_API_KEY=sk-your-api-key-here
 ollama pull llama3.2
 
 # 3. Run Packet Peeper - it auto-detects Ollama
+cd backend
 python app.py Wi-Fi
 ```
 
@@ -165,19 +167,18 @@ python app.py Wi-Fi
 
 ```
 Packet_Peeper/
-├── app.py                          # Flask + Socket.IO backend
-├── packet_sniffer.py               # Scapy packet capture engine
-├── network_security_monitor.py     # Attack detection (16 types)
-├── requirements.txt                # Python dependencies
-│
-├── config/
-│   └── config.py                   # Centralized configuration
-│
-├── services/
-│   ├── ai_assistant.py             # 🤖 AI remediation system
-│   ├── database_services.py        # SQLite/PostgreSQL storage
-│   ├── packet_processor.py         # Async packet processing
-│   └── report_generator.py         # PDF/CSV/JSON exports
+├── backend/                        # Python Flask Backend
+│   ├── app.py                      # Flask + Socket.IO server
+│   ├── packet_sniffer.py           # Scapy packet capture engine
+│   ├── network_security_monitor.py # Attack detection (16 types)
+│   ├── requirements.txt            # Python dependencies
+│   ├── config/
+│   │   └── config.py               # Centralized configuration
+│   └── services/
+│       ├── ai_assistant.py         # 🤖 AI remediation system
+│       ├── database_services.py    # SQLite/PostgreSQL storage
+│       ├── packet_processor.py     # Async packet processing
+│       └── report_generator.py     # PDF/CSV/JSON exports
 │
 ├── frontend/                       # React 19 + TypeScript + Tailwind
 │   ├── src/
@@ -252,6 +253,7 @@ python application_attacks.py --target 127.0.0.1 --method sql_injection
 ### No packets captured
 ```bash
 # Run as Administrator (Windows) or sudo (Linux/Mac)
+cd backend
 sudo python app.py Wi-Fi
 
 # List available interfaces

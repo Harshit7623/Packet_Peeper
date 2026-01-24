@@ -37,12 +37,13 @@ REM Step 3: Activate virtual environment and install dependencies
 echo [3/5] Installing dependencies...
 call venv\Scripts\activate.bat
 python -m pip install --upgrade pip -q >nul 2>&1
-pip install -r requirements.txt -q
+pip install -r backend\requirements.txt -q
 echo. [✓] Dependencies installed
 echo.
 
 REM Step 4: Run verification
 echo [4/5] Verifying installation...
+cd backend
 python verify_backend.py
 if errorlevel 1 (
     echo. [×] Verification failed!
@@ -80,4 +81,5 @@ echo.
 REM Start the backend
 python app.py "!INTERFACE!"
 
+cd ..
 pause

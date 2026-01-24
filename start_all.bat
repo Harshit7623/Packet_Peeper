@@ -6,7 +6,7 @@ echo.
 echo This script will start both the backend and frontend.
 echo.
 echo [1/2] Starting Flask Backend (Port 5000)...
-start "Packet Peeper Backend" cmd /c "cd /d %~dp0 && python app.py"
+start "Packet Peeper Backend" cmd /c "cd /d %~dp0backend && python app.py"
 
 echo.
 echo Waiting for backend to initialize...
