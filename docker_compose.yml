@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # ============== PostgreSQL Database ==============
+  postgres:
+    image: postgres:15-alpine
+    container_name: packet_peeper_db
+    environment:
+      POSTGRES_USER: packet_peeper_user
+      POSTGRES_PASSWORD: secure_password_change_me
+      POSTGRES_DB: packet_peeper_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U packet_peeper_user -d packet_peeper_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - packet_peeper_network
+
+  # ============== Packet Peeper Backend ==============
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: packet_peeper_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FLASK_ENV: production
+      FLASK_DEBUG: "False"
+      SECRET_KEY: your-secret-key-change-in-production
+      DB_ENGINE: postgresql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: packet_peeper_user
+      DB_PASSWORD: secure_password_change_me
+      DB_NAME: packet_peeper_db
+      CAPTURE_INTERFACE: eth0
+      LOG_LEVEL: INFO
+      ASYNC_PROCESSING: "True"
+      FEATURE_PERSISTENT_STORAGE: "True"
+      FEATURE_THREAT_DETECTION: "True"
+      FEATURE_PDF_REPORTS: "True"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    networks:
+      - packet_peeper_network
+    # Note: Requires --cap-add NET_RAW for packet capture
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # ============== React Frontend (Optional) ==============
+  frontend:
+    build:
+      context: ./my-app
+      dockerfile: Dockerfile
+    container_name: packet_peeper_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - packet_peeper_network
+    restart: unless-stopped
+
+  # ============== Nginx Reverse Proxy (Optional) ==============
+  nginx:
+    image: nginx:alpine
+    container_name: packet_peeper_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - packet_peeper_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  packet_peeper_network:
+    driver: bridge

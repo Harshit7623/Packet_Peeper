@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"name": "Packet_Peeper",
+			"path": "."
+		}
+	],
+	"settings": {
+		"liveServer.settings.port": 5501
+	}
+}

@@ -1,6 +1,7 @@
 ﻿# Dependencies
 node_modules/
 .venv/
+venv/
 __pycache__/
 *.pyc
 
@@ -19,6 +20,11 @@ logs/
 # IDE
 .idea/
 .vscode/
+
+# Other
+*.exe
+*.db
+Packet_Peeper/
 
 # Other projects (not part of NetworkSnifferr)
 Smart-Garden/
