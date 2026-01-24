@@ -1,0 +1,32 @@
+# Core networking and packet capture
+scapy==2.5.0
+tldextract==5.1.2
+
+# Flask web framework and WebSocket support
+flask==3.0.2
+flask-cors==4.0.0
+flask-socketio==5.3.6
+python-socketio==5.11.1
+python-engineio==4.8.0
+
+# Async and threading support
+eventlet==0.35.2
+
+# Database (optional, for future use)
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.27
+alembic==1.13.1
+
+# Data analysis and reporting
+pandas==2.1.4
+reportlab==4.1.0
+fpdf==1.7.2
+
+# System monitoring
+psutil==5.9.8
+
+# HTTP requests for device manufacturer lookup
+requests==2.31.0
+
+# Environment variables
+python-dotenv==1.0.0

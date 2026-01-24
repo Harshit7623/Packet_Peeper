@@ -1,0 +1,116 @@
+{
+  "name": "packet-peeper",
+  "version": "1.0.0",
+  "description": "AI-Powered Network Security Monitor - Real-time threat detection and remediation for home networks",
+  "main": "main.js",
+  "author": {
+    "name": "Packet Peeper Team",
+    "email": "contact@packetpeeper.app"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/yourusername/packet-peeper",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/packet-peeper.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npm run start:backend\" \"npm run start:frontend\" \"wait-on http://localhost:5173 && electron .\"",
+    "start:backend": "cd ../.. && python app.py Wi-Fi",
+    "start:frontend": "cd ../../frontend && npm run dev",
+    "build": "npm run build:frontend && electron-builder",
+    "build:frontend": "cd ../../frontend && npm run build",
+    "build:win": "npm run build:frontend && electron-builder --win",
+    "build:mac": "npm run build:frontend && electron-builder --mac",
+    "build:linux": "npm run build:frontend && electron-builder --linux",
+    "pack": "electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-is-dev": "^2.0.0",
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.1.7"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.packetpeeper.app",
+    "productName": "Packet Peeper",
+    "copyright": "Copyright © 2024 Packet Peeper Team",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../",
+        "to": "backend",
+        "filter": [
+          "**/*.py",
+          "config/**/*",
+          "services/**/*",
+          "templates/**/*",
+          "requirements.txt",
+          "!**/__pycache__/**",
+          "!*.log",
+          "!data/**/*",
+          "!logs/**/*",
+          "!attack_tests/**/*",
+          "!frontend/**/*",
+          "!desktop/**/*",
+          "!mobile/**/*",
+          "!.git/**/*"
+        ]
+      },
+      {
+        "from": "../../frontend/dist",
+        "to": "frontend",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Packet Peeper"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "assets/icon.png",
+      "category": "Network"
+    },
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    }
+  }
+}
