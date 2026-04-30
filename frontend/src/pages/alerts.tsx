@@ -2,19 +2,21 @@ import { MainLayout } from "@/components/layout/MainLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Shield, CheckCircle, Clock, Filter, Info, Trash2, Zap, Radio, ShieldAlert, ShieldCheck, Bell, Activity, Eye, XCircle, Bot, Sparkles } from "lucide-react";
+import { AlertTriangle, Shield, CheckCircle, Clock, Filter, Info, Trash2, Zap, Radio, ShieldAlert, ShieldCheck, Bell, Activity, Eye, XCircle, Bot, Sparkles, Loader2 } from "lucide-react";
 import { useMonitorStore } from "@/store/monitorStore";
 import { apiService } from "@/services/apiService";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AIHelpButton, AIHealthWidget } from "@/components/AIAssistant";
+import { SystemStatusBar } from "@/components/SystemStatusBar";
 
 export default function Alerts() {
-  const { alerts, setAlerts } = useMonitorStore();
+  const { alerts, setAlerts, clearAlerts } = useMonitorStore();
   const [filter, setFilter] = useState<'all' | 'critical' | 'high' | 'medium'>('all');
   const [isScanning, setIsScanning] = useState(true);
   const [newAlertFlash, setNewAlertFlash] = useState(false);
   const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
   
   // Simulate real-time scanning indicator
   useEffect(() => {
@@ -48,66 +50,40 @@ export default function Alerts() {
   };
 
   const handleClearAll = async () => {
-    if (confirm('Are you sure you want to clear all alerts?')) {
-      try {
-        await apiService.clearAlerts();
-        setAlerts([]);
-      } catch (err) {
-        console.error('Failed to clear alerts:', err);
-      }
+    if (alerts.length === 0) return;
+    
+    const confirmed = window.confirm('Are you sure you want to clear all alerts?');
+    if (!confirmed) return;
+    
+    setIsClearing(true);
+    try {
+      await apiService.clearAlerts();
+      // Use both methods to ensure state is cleared
+      clearAlerts();
+      setAlerts([]);
+      console.log('All alerts cleared successfully');
+    } catch (err) {
+      console.error('Failed to clear alerts:', err);
+      alert('Failed to clear alerts. Please try again.');
+    } finally {
+      setIsClearing(false);
     }
   };
   
-  // Use real alerts if available, otherwise show demo data
-  const baseAlerts = alerts.length > 0 ? alerts.map(a => ({
+  // Use real alerts only - no demo data
+  const baseAlerts = alerts.map(a => ({
     id: a.id,
-    type: a.type, // Preserve the actual attack type for AI
+    type: a.type || a.alert_type, // Preserve the actual attack type for AI (supports both field names)
+    alert_type: a.alert_type || a.type, // Also include alert_type for backend compatibility
     severity: a.severity,
     title: a.title,
     description: a.description,
-    source: a.source,
+    source: a.source || a.source_ip,
     time: new Date(a.timestamp).toLocaleTimeString(),
     status: a.severity === 'critical' ? 'Action Required' : 'Review',
     recommendation: a.additional_info?.recommendation || 'Review this alert for more details.',
-    evidence: a.additional_info?.evidence || {}
-  })) : [
-    {
-      id: 1,
-      type: "dos_flood",
-      severity: "critical" as const,
-      title: "Unusual Traffic Spike",
-      description: "A large amount of data is being sent to an unknown address.",
-      source: "Desktop PC",
-      time: "2 mins ago",
-      status: "Action Required",
-      recommendation: "Review this device's activity or block the connection.",
-      evidence: {}
-    },
-    {
-      id: 2,
-      type: "brute_force",
-      severity: "high" as const,
-      title: "Suspicious Login Attempt",
-      description: "Someone tried to access your smart home hub with the wrong password.",
-      source: "Unknown Location",
-      time: "15 mins ago",
-      status: "Blocked",
-      recommendation: "Consider changing your admin password.",
-      evidence: {}
-    },
-    {
-      id: 3,
-      type: "port_scan",
-      severity: "medium" as const,
-      title: "New Device Discovery",
-      description: "A new device named 'Guest-Phone' has joined your Wi-Fi.",
-      source: "Wi-Fi Network",
-      time: "1 hour ago",
-      status: "Review",
-      recommendation: "Check if you recognize this device.",
-      evidence: {}
-    }
-  ];
+    evidence: a.evidence || a.additional_info?.evidence || {}
+  }));
 
   // Apply filter
   const displayAlerts = filter === 'all' 
@@ -182,13 +158,21 @@ export default function Alerts() {
             <Button 
               variant="outline" 
               size="sm"
-              className="rounded-full text-destructive hover:text-destructive border-destructive/30 hover:border-destructive/50"
+              className="rounded-full text-destructive hover:text-destructive border-destructive/30 hover:border-destructive/50 disabled:opacity-50"
               onClick={handleClearAll}
+              disabled={isClearing || alerts.length === 0}
             >
-              <Trash2 className="mr-2 h-4 w-4" /> Clear All
+              {isClearing ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Clearing...</>
+              ) : (
+                <><Trash2 className="mr-2 h-4 w-4" /> Clear All</>
+              )}
             </Button>
           </motion.div>
         </motion.div>
+
+        {/* System Status Bar - AI and Detection Profile */}
+        <SystemStatusBar />
 
         {/* Animated Stats Grid */}
         <div className="grid gap-4 md:grid-cols-4">
@@ -438,19 +422,6 @@ export default function Alerts() {
                                     evidence: alert.evidence || {}
                                   }}
                                 />
-                                {alert.severity === 'critical' && (
-                                  <motion.div
-                                    whileHover={{ scale: 1.05 }}
-                                    whileTap={{ scale: 0.95 }}
-                                  >
-                                    <Button 
-                                      size="sm"
-                                      className={`rounded-full px-6 ${colors.bg} hover:opacity-90 ${colors.glow}`}
-                                    >
-                                      Take Action
-                                    </Button>
-                                  </motion.div>
-                                )}
                               </div>
                             </div>
                           </div>

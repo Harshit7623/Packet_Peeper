@@ -20,6 +20,7 @@ from scapy.layers.dns import DNS, DNSQR, DNSRR
 from scapy.layers.tls.all import TLSClientHello
 from datetime import datetime
 import os
+import platform
 import time
 import logging
 import json
@@ -28,11 +29,12 @@ import ipaddress
 import tldextract
 import psutil
 from network_security_monitor import NetworkSecurityMonitor
+from config.config import CAPTURE_DEBUG
 
 # ---------------- Default BPF Filter ---------------- #
+# Include TCP, UDP, ICMP, and ARP for comprehensive attack detection
 DEFAULT_BPF = (
-    "(tcp or udp)"
-    " and not arp"
+    "(tcp or udp or icmp or arp)"
     " and not (udp and (port 67 or port 68 or port 5353 or port 1900 or port 123))"
 )
 
@@ -42,10 +44,12 @@ if not os.path.exists("logs"):
 
 log_file = os.path.join("logs", "classification.log")
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if CAPTURE_DEBUG else logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
 )
+
+logger = logging.getLogger("packet_peeper.capture")
 
 # ---------------- Service Map Loader ---------------- #
 def load_service_map(path="service_map.json"):
@@ -338,133 +342,179 @@ class PacketSniffer:
     def discover_devices(self):
         """Discover network interfaces and determine local network."""
         try:
-            import subprocess
-            import re
-            
-            # Get host's primary IP
+            system_name = platform.system().lower()
             host_ip = self.get_host_ip()
             if host_ip:
                 print(f"Host IP detected: {host_ip}")
-            
-            # Use ipconfig to get Windows network interface information
-            try:
-                output = subprocess.check_output("ipconfig /all", text=True, errors='ignore')
-                
-                # Parse ipconfig output for interfaces
-                adapter_sections = output.split('\n\n')
-                
-                for section in adapter_sections:
-                    if not section.strip():
-                        continue
-                    
-                    # Extract adapter info
-                    lines = section.split('\n')
-                    adapter_name = None
-                    ip_addr = None
-                    mac_addr = None
-                    netmask = None
-                    
-                    for line in lines:
-                        if 'Ethernet adapter' in line or 'Wireless LAN' in line or 'Wi-Fi' in line:
-                            adapter_name = line.split(':')[0].strip()
-                        
-                        if 'IPv4 Address' in line and 'Preferred' not in line:
-                            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
-                            if ip_match:
-                                ip_addr = ip_match.group(1)
-                        
-                        if 'Physical Address' in line or 'MAC Address' in line:
-                            mac_match = re.search(r'([0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5})', line)
-                            if mac_match:
-                                mac_addr = mac_match.group(1)
-                        
-                        if 'Subnet Mask' in line:
-                            mask_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
-                            if mask_match:
-                                netmask = mask_match.group(1)
-                    
-                    # If we found an IP, process it
-                    if ip_addr and adapter_name:
-                        print(f"Found adapter: {adapter_name} - IP: {ip_addr} - MAC: {mac_addr}")
-                        
-                        # Determine local network CIDR
-                        try:
-                            import socket
-                            import struct
-                            if netmask:
-                                netmask_bits = bin(struct.unpack('!I', socket.inet_aton(netmask))[0]).count('1')
-                                
-                                # Calculate network address
-                                ip_int = struct.unpack('!I', socket.inet_aton(ip_addr))[0]
-                                mask_int = struct.unpack('!I', socket.inet_aton(netmask))[0]
-                                network = ip_int & mask_int
-                                network_addr = socket.inet_ntoa(struct.pack('!I', network))
-                                self.local_network = f"{network_addr}/{netmask_bits}"
-                                print(f"Local network detected: {self.local_network}")
-                        except Exception as e:
-                            print(f"Error calculating network CIDR: {e}")
-                            # Fallback to common home network CIDR
-                            if ip_addr.startswith('192.168.'):
-                                self.local_network = '192.168.0.0/16'
-                            elif ip_addr.startswith('10.'):
-                                self.local_network = '10.0.0.0/8'
-                            elif ip_addr.startswith('172.'):
-                                self.local_network = '172.16.0.0/12'
-                        
-                        # Add interface to devices
-                        self.devices[adapter_name] = {
-                            'id': len(self.devices) + 1,
-                            'name': adapter_name,
-                            'type': 'Wireless' if 'Wi-Fi' in adapter_name or 'Wireless' in adapter_name else 'Wired',
-                            'status': 'Active',
-                            'ipAddress': ip_addr,
-                            'macAddress': mac_addr,
-                            'packetsCaptured': 0,
-                            'lastActive': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            'isLocal': True
-                        }
-                        
-                        self.device_stats[adapter_name] = {
-                            'packets': 0,
-                            'bytes': 0,
-                            'last_seen': time.time()
-                        }
-                        
-                        # Add the interface itself as an active device
-                        self.active_devices[ip_addr] = {
-                            'ipAddress': ip_addr,
-                            'macAddress': mac_addr,
-                            'hostname': adapter_name,
-                            'type': 'Interface',
-                            'firstSeen': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            'lastSeen': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            'packetsIn': 0,
-                            'packetsOut': 0,
-                            'bytesIn': 0,
-                            'bytesOut': 0,
-                            'status': 'Active'
-                        }
 
-            except Exception as e:
-                logging.warning(f"Error parsing adapter section: {e}")
-        
+            if system_name == 'windows':
+                self._discover_devices_windows()
+            else:
+                self._discover_devices_psutil()
+
         except Exception as e:
             logging.exception(f"Error discovering devices: {e}")
 
+    def _discover_devices_windows(self):
+        """Discover network interfaces using Windows ipconfig output."""
+        import subprocess
+        import re
+        import struct
+
+        output = subprocess.check_output("ipconfig /all", text=True, errors='ignore')
+        adapter_sections = output.split('\n\n')
+
+        for section in adapter_sections:
+            if not section.strip():
+                continue
+
+            lines = section.split('\n')
+            adapter_name = None
+            ip_addr = None
+            mac_addr = None
+            netmask = None
+
+            for line in lines:
+                if 'Ethernet adapter' in line or 'Wireless LAN' in line or 'Wi-Fi' in line:
+                    adapter_name = line.split(':')[0].strip()
+
+                if 'IPv4 Address' in line and 'Preferred' not in line:
+                    ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                    if ip_match:
+                        ip_addr = ip_match.group(1)
+
+                if 'Physical Address' in line or 'MAC Address' in line:
+                    mac_match = re.search(r'([0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5})', line)
+                    if mac_match:
+                        mac_addr = mac_match.group(1)
+
+                if 'Subnet Mask' in line:
+                    mask_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                    if mask_match:
+                        netmask = mask_match.group(1)
+
+            if not (ip_addr and adapter_name):
+                continue
+
+            print(f"Found adapter: {adapter_name} - IP: {ip_addr} - MAC: {mac_addr}")
+
+            if netmask:
+                try:
+                    netmask_bits = bin(struct.unpack('!I', socket.inet_aton(netmask))[0]).count('1')
+                    ip_int = struct.unpack('!I', socket.inet_aton(ip_addr))[0]
+                    mask_int = struct.unpack('!I', socket.inet_aton(netmask))[0]
+                    network = ip_int & mask_int
+                    network_addr = socket.inet_ntoa(struct.pack('!I', network))
+                    self.local_network = f"{network_addr}/{netmask_bits}"
+                except Exception as e:
+                    logging.warning(f"Failed to compute local network from netmask: {e}")
+
+            self._register_interface_device(adapter_name, ip_addr, mac_addr)
+
+    def _discover_devices_psutil(self):
+        """Discover network interfaces on Linux/macOS using psutil data."""
+        net_if_addrs = psutil.net_if_addrs()
+
+        for adapter_name, addrs in net_if_addrs.items():
+            adapter_name_lower = adapter_name.lower()
+            if adapter_name_lower.startswith('lo') or adapter_name_lower.startswith('loopback'):
+                continue
+
+            ip_addr = None
+            mac_addr = None
+
+            for addr in addrs:
+                family = getattr(addr, 'family', None)
+                if family == socket.AF_INET:
+                    ip_addr = addr.address
+                elif str(family).lower().endswith('af_link') or str(family) == '17':
+                    mac_addr = addr.address
+
+            if not ip_addr:
+                continue
+
+            self._register_interface_device(adapter_name, ip_addr, mac_addr)
+
+            if not self.local_network:
+                try:
+                    ip_obj = ipaddress.ip_interface(f"{ip_addr}/24")
+                    self.local_network = str(ip_obj.network)
+                except Exception:
+                    pass
+
+    def _register_interface_device(self, adapter_name, ip_addr, mac_addr):
+        """Store interface metadata and seed it as an active device."""
+        if not adapter_name or not ip_addr:
+            return
+
+        self.devices[adapter_name] = {
+            'id': len(self.devices) + 1,
+            'name': adapter_name,
+            'type': 'Wireless' if 'wi-fi' in adapter_name.lower() or 'wireless' in adapter_name.lower() else 'Wired',
+            'status': 'Active',
+            'ipAddress': ip_addr,
+            'macAddress': mac_addr,
+            'packetsCaptured': 0,
+            'lastActive': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'isLocal': True
+        }
+
+        self.device_stats[adapter_name] = {
+            'packets': 0,
+            'bytes': 0,
+            'last_seen': time.time()
+        }
+
+        self.active_devices[ip_addr] = {
+            'ipAddress': ip_addr,
+            'macAddress': mac_addr,
+            'hostname': adapter_name,
+            'type': 'Interface',
+            'firstSeen': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'lastSeen': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'packetsIn': 0,
+            'packetsOut': 0,
+            'bytesIn': 0,
+            'bytesOut': 0,
+            'status': 'Active'
+        }
+
     def is_local_ip(self, ip):
-        """Check if an IP is in the local network range."""
+        """Check if an IP is in the local network range or any private IP range."""
         if not ip or ip == '0.0.0.0':
             return False
         try:
-            if not self.local_network:
-                return False
-            return ipaddress.ip_address(ip) in ipaddress.ip_network(self.local_network)
-        except:
+            ip_obj = ipaddress.ip_address(ip)
+            
+            # Always allow private IP ranges (RFC 1918)
+            private_networks = [
+                ipaddress.ip_network('10.0.0.0/8'),
+                ipaddress.ip_network('172.16.0.0/12'),
+                ipaddress.ip_network('192.168.0.0/16'),
+                ipaddress.ip_network('127.0.0.0/8'),  # Loopback
+            ]
+            
+            for network in private_networks:
+                if ip_obj in network:
+                    return True
+            
+            # Also check specific local_network if detected
+            if self.local_network:
+                if ip_obj in ipaddress.ip_network(self.local_network):
+                    return True
+            
+            return False
+        except Exception as e:
+            logging.debug(f"is_local_ip error for {ip}: {e}")
             return False
 
     def update_active_device(self, ip, mac=None, is_source=True, packet_len=0):
         """Update active device information based on packet data."""
         if not ip or ip == '0.0.0.0':
+            return
+        
+        # Only track LOCAL network devices, not remote internet hosts
+        if not self.is_local_ip(ip):
             return
 
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -665,7 +715,12 @@ class PacketSniffer:
                 packet_info["protocol"] = "TCP"
                 packet_info["src_port"] = tcp.sport
                 packet_info["dst_port"] = tcp.dport
-                packet_info["tcp_flags"] = tcp.flags
+                # Convert TCP flags to integer (Scapy returns FlagValue object)
+                try:
+                    packet_info["tcp_flags"] = int(tcp.flags)
+                except:
+                    packet_info["tcp_flags"] = 0
+                print(f"[TCP FLAGS] {packet_info['src_ip']}:{tcp.sport} -> {packet_info['dst_ip']}:{tcp.dport} flags={packet_info['tcp_flags']} ({tcp.flags})")
                 self.tcp_count += 1
             elif packet.haslayer(UDP):
                 udp = packet[UDP]
@@ -676,6 +731,24 @@ class PacketSniffer:
             elif packet.haslayer(ICMP):
                 packet_info["protocol"] = "ICMP"
                 self.icmp_count += 1
+            
+            # Handle ARP packets for spoofing detection
+            try:
+                from scapy.layers.l2 import ARP as ARP_Layer
+                if packet.haslayer(ARP_Layer):
+                    arp = packet[ARP_Layer]
+                    packet_info["protocol"] = "ARP"
+                    packet_info["arp_op"] = arp.op  # 1=request, 2=reply
+                    packet_info["arp_src_ip"] = arp.psrc
+                    packet_info["arp_dst_ip"] = arp.pdst
+                    packet_info["arp_src_mac"] = arp.hwsrc
+                    packet_info["arp_dst_mac"] = arp.hwdst
+                    packet_info["src_ip"] = arp.psrc
+                    packet_info["dst_ip"] = arp.pdst
+                    print(f"[ARP] op={arp.op} {arp.psrc} ({arp.hwsrc}) -> {arp.pdst} ({arp.hwdst})")
+            except:
+                pass
+            
             # Bandwidth tracking
             now = time.time()
             self.bandwidth_history.append((now, len(packet)))
@@ -786,40 +859,77 @@ class PacketSniffer:
         except Exception as e:
             print(f"Error handling packet: {e}")
 
-    def start_sniffing(self, interface="Wi-Fi", bpf=None):
-        try:
-            bpf = bpf or DEFAULT_BPF
-            print(f"Starting sniffing on {interface} with filter: {bpf}")
-            
-            # Set Scapy configurations for better packet capture
-            conf.sniff_promisc = True  # Enable promiscuous mode
-            conf.use_pcap = True       # Use libpcap for better packet capture
-            
-            # Try to find the correct interface name
-            if interface in conf.ifaces:
-                actual_interface = interface
+    def start_sniffing(self, interface="auto", bpf=None):
+        import traceback
+        bpf = bpf or DEFAULT_BPF
+        logger.info(f"Starting sniffing on {interface} with filter: {bpf}")
+        
+        # Set Scapy configurations for better packet capture
+        conf.sniff_promisc = True  # Enable promiscuous mode
+        conf.use_pcap = True       # Use libpcap for better packet capture
+        
+        available_interfaces = get_if_list()
+
+        # Auto-select interface if requested.
+        if not interface or str(interface).lower() == 'auto':
+            preferred = [i for i in available_interfaces if not i.lower().startswith('lo')]
+            if preferred:
+                actual_interface = preferred[0]
+            elif available_interfaces:
+                actual_interface = available_interfaces[0]
             else:
-                # Try to find the interface by description or name
-                for iface in conf.ifaces.values():
-                    if interface.lower() in str(iface.description).lower() or interface.lower() in str(iface.name).lower():
-                        actual_interface = iface.name
-                        print(f"Found matching interface: {actual_interface}")
-                        break
-                else:
-                    print(f"Warning: Interface {interface} not found exactly, using as-is")
-                    actual_interface = interface
-            
-            print(f"Starting capture on interface: {actual_interface}")
-            print("Waiting for packets...")
-            
-            # Start the actual sniffing
-            sniff(iface=actual_interface, 
-                  prn=self.handle_packet, 
-                  store=0, 
-                  filter=bpf)
-        except Exception as e:
-            print(f"Error starting packet capture: {str(e)}")
-            raise
+                raise RuntimeError("No network interfaces found for packet capture")
+            logger.info(f"Auto-selected interface: {actual_interface}")
+        elif interface in conf.ifaces:
+            actual_interface = interface
+        else:
+            # Try to find the interface by description or name
+            interface_lower = str(interface).lower()
+            actual_interface = None
+            for iface in conf.ifaces.values():
+                iface_name = str(getattr(iface, 'name', ''))
+                iface_desc = str(getattr(iface, 'description', ''))
+                if interface_lower in iface_desc.lower() or interface_lower in iface_name.lower():
+                    actual_interface = iface_name
+                    logger.info(f"Found matching interface: {actual_interface}")
+                    break
+
+            if not actual_interface:
+                logger.warning(f"Interface {interface} not found exactly, using as-is")
+                actual_interface = interface
+        
+            logger.info(f"Starting capture on interface: {actual_interface}")
+            logger.info("Waiting for packets...")
+        
+        # Start the actual sniffing with auto-restart on failure
+        retry_count = 0
+        max_retries = 5
+        while retry_count < max_retries:
+            try:
+                sniff(iface=actual_interface, 
+                      prn=self.handle_packet, 
+                      store=0, 
+                      filter=bpf)
+                # If sniff() returns normally, log and restart
+                logger.warning("Sniff loop exited normally, restarting...")
+                retry_count += 1
+                time.sleep(1)
+            except KeyboardInterrupt:
+                logger.info("Sniffing stopped by user")
+                break
+            except PermissionError as e:
+                logger.error(f"Packet capture permission error on {actual_interface}: {str(e)}")
+                raise
+            except Exception as e:
+                logger.error(f"Packet capture error: {str(e)}")
+                traceback.print_exc()
+                retry_count += 1
+                logger.warning(f"Restarting capture (attempt {retry_count}/{max_retries})...")
+                time.sleep(2)
+        
+        error_msg = f"Sniffing stopped after {max_retries} retries"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
 
     def get_metrics(self):
         return self.metrics

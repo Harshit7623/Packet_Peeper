@@ -5,9 +5,10 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { socketService } from "@/services/socketService";
-import { apiService } from "@/services/apiService";
+import { apiService, ApiError } from "@/services/apiService";
 import { useMonitorStore } from "@/store/monitorStore";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import NotFound from "@/pages/not-found";
 
 import Dashboard from "@/pages/dashboard";
@@ -19,11 +20,37 @@ import Analytics from "@/pages/analytics";
 import SystemStats from "@/pages/system";
 import Logs from "@/pages/logs";
 import Settings from "@/pages/settings";
+import Login from "@/pages/login";
+import ActionCenter from "@/pages/action-center";
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-center space-y-3">
+        <div className="text-xs font-mono tracking-[0.3em] text-primary">VERIFYING ACCESS</div>
+        <div className="text-2xl font-black text-foreground">Authenticating Session</div>
+        <div className="text-sm text-muted-foreground">Connecting to your security console...</div>
+      </div>
+    </div>
+  );
+}
 
 function Router() {
+  const { authEnabled, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
+
+  if (authEnabled && !isAuthenticated) {
+    return <Login />;
+  }
+
   return (
     <Switch>
+      <Route path="/login" component={Login} />
       <Route path="/" component={Dashboard} />
+      <Route path="/action-center" component={ActionCenter} />
       <Route path="/packets" component={PacketMonitor} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/network" component={NetworkMap} />
@@ -39,9 +66,27 @@ function Router() {
 }
 
 function AppContent() {
+  const { authEnabled, isAuthenticated, isLoading, refreshStatus } = useAuth();
+
   useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    if (authEnabled && !isAuthenticated) {
+      socketService.disconnect();
+      useMonitorStore.getState().setConnected(false);
+      return;
+    }
+
+    let isActive = true;
+
     // Connect to backend on mount
     const initializeConnection = async () => {
+      if (!isActive) {
+        return;
+      }
+
       // First try socket connection
       try {
         await socketService.connect();
@@ -56,6 +101,11 @@ function AppContent() {
           useMonitorStore.getState().setConnected(true);
           console.log("✅ API health check passed");
         } catch (apiError) {
+          if (apiError instanceof ApiError && apiError.status === 401) {
+            await refreshStatus();
+            return;
+          }
+
           console.error("❌ Backend unreachable:", apiError);
           useMonitorStore.getState().setConnected(false);
         }
@@ -83,6 +133,10 @@ function AppContent() {
           useMonitorStore.getState().setLogs(logs.value);
         }
       } catch (dataError) {
+        if (dataError instanceof ApiError && dataError.status === 401) {
+          await refreshStatus();
+          return;
+        }
         console.error("Failed to load initial data:", dataError);
       }
     };
@@ -97,7 +151,11 @@ function AppContent() {
           useMonitorStore.getState().setConnected(true);
           console.log("✅ Connection restored");
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          await refreshStatus();
+          return;
+        }
         if (useMonitorStore.getState().isConnected) {
           useMonitorStore.getState().setConnected(false);
           console.log("⛔ Connection lost");
@@ -107,25 +165,30 @@ function AppContent() {
 
     // Cleanup on unmount
     return () => {
+      isActive = false;
       socketService.disconnect();
       clearInterval(healthInterval);
     };
-  }, []);
+  }, [authEnabled, isAuthenticated, isLoading, refreshStatus]);
 
   return (
-    <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Router />
+      </TooltipProvider>
+    </QueryClientProvider>
   );
 }
 
 function App() {
-  return <AppContent />;
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ThemeProvider>
+  );
 }
 
 export default App;

@@ -13,7 +13,8 @@ import {
   ChevronLeft, 
   ChevronRight,
   Eye,
-  Terminal
+  Terminal,
+  Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -23,6 +24,7 @@ const sidebarItems = [
   { icon: LayoutDashboard, label: "Home", sub: "Command Center", href: "/" },
   { icon: Eye, label: "Monitor", sub: "Live Intercept", href: "/packets" },
   { icon: ShieldAlert, label: "Security", sub: "Threat Matrix", href: "/alerts" },
+  { icon: Sparkles, label: "Action Center", sub: "Guided Fixes", href: "/action-center" },
   { icon: Network, label: "Devices", sub: "Node Topology", href: "/network" },
   { icon: Activity, label: "Traffic", sub: "Usage Analysis", href: "/traffic" },
   { icon: LineChart, label: "Insights", sub: "Deep Analytics", href: "/analytics" },

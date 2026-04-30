@@ -15,7 +15,7 @@ const store = new Store({
     windowBounds: { width: 1400, height: 900 },
     startMinimized: false,
     launchOnStartup: false,
-    selectedInterface: 'Wi-Fi',
+    selectedInterface: 'auto',
     backendPort: 5000,
     frontendPort: 5173
   }
@@ -37,7 +37,7 @@ const FRONTEND_PORT = store.get('frontendPort');
 // Paths
 const getBackendPath = () => {
   if (isDev) {
-    return path.join(__dirname, '..', '..');
+    return path.join(__dirname, '..', '..', 'backend');
   }
   return path.join(process.resourcesPath, 'backend');
 };

@@ -24,7 +24,7 @@ try:
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
-    logger.warning("⚠️  ReportLab not available; PDF reports disabled")
+    logger.warning("[WARN] ReportLab not available; PDF reports disabled")
 
 from config.config import REPORTS_DIR, REPORT_FORMATS
 
@@ -40,7 +40,7 @@ class ReportGenerator:
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"📊 ReportGenerator initialized, output: {self.output_dir}")
+        logger.info(f"[Report] Generator initialized, output: {self.output_dir}")
     
     def generate_csv_report(self,
                           packets: List[Dict],
@@ -73,12 +73,12 @@ class ReportGenerator:
                     for packet in packets:
                         writer.writerow({k: packet.get(k, '') for k in fieldnames})
                     
-                    logger.info(f"📊 CSV report generated: {filepath}")
+                    logger.info(f"[Report] CSV report generated: {filepath}")
             
             return filepath
         
         except Exception as e:
-            logger.error(f"❌ Error generating CSV report: {str(e)}")
+            logger.error(f"[ERROR] Error generating CSV report: {str(e)}")
             return None
     
     def generate_alert_csv_report(self,
@@ -109,12 +109,12 @@ class ReportGenerator:
                     for alert in alerts:
                         writer.writerow({k: alert.get(k, '') for k in fieldnames})
                     
-                    logger.info(f"📊 Alert CSV report generated: {filepath}")
+                    logger.info(f"[Report] Alert CSV report generated: {filepath}")
             
             return filepath
         
         except Exception as e:
-            logger.error(f"❌ Error generating alert CSV report: {str(e)}")
+            logger.error(f"[ERROR] Error generating alert CSV report: {str(e)}")
             return None
     
     def generate_pdf_report(self,
@@ -135,7 +135,7 @@ class ReportGenerator:
             Path to generated PDF file or None on error
         """
         if not REPORTLAB_AVAILABLE:
-            logger.warning("⚠️  ReportLab not available; PDF report generation disabled")
+            logger.warning("[WARN] ReportLab not available; PDF report generation disabled")
             return None
         
         try:
@@ -262,11 +262,11 @@ class ReportGenerator:
             
             # Build PDF
             doc.build(story)
-            logger.info(f"📄 PDF report generated: {filepath}")
+            logger.info(f"[Report] PDF report generated: {filepath}")
             return filepath
         
         except Exception as e:
-            logger.error(f"❌ Error generating PDF report: {str(e)}")
+            logger.error(f"[ERROR] Error generating PDF report: {str(e)}")
             return None
     
     def generate_json_report(self,
@@ -310,11 +310,11 @@ class ReportGenerator:
             with open(filepath, 'w') as f:
                 json.dump(report, f, indent=2, default=str)
             
-            logger.info(f"📋 JSON report generated: {filepath}")
+            logger.info(f"[Report] JSON report generated: {filepath}")
             return filepath
         
         except Exception as e:
-            logger.error(f"❌ Error generating JSON report: {str(e)}")
+            logger.error(f"[ERROR] Error generating JSON report: {str(e)}")
             return None
     
     def generate_summary_report(self,

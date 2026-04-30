@@ -21,12 +21,15 @@ export interface Packet {
 
 export interface Alert {
   id: number;
-  type: string;
+  type?: string;  // From websocket (has 'type' field)
+  alert_type?: string;  // From API (has 'alert_type' field)
   title: string;
   description: string;
   timestamp: string;
-  source: string;
+  source?: string;
+  source_ip?: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
+  evidence?: Record<string, any>;
   additional_info?: Record<string, any>;
 }
 
@@ -148,7 +151,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   logs: [],
   isConnected: false,
   isSniffing: true, // Default to true since backend auto-starts
-  sniffingInterface: 'Wi-Fi',
+  sniffingInterface: 'auto',
 
   // Packet methods
   addPacket: (packet: Packet) =>

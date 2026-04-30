@@ -64,7 +64,7 @@ class AISecurityAssistant:
         self.cache = {}  # Simple in-memory cache
         self.cache_ttl = 3600  # 1 hour cache
         
-        logger.info(f"🤖 AI Assistant initialized with provider: {self.provider.value}")
+        logger.info(f"[AI] Assistant initialized with provider: {self.provider.value}")
     
     def _detect_provider(self, provider: str, api_key: str) -> AIProvider:
         """Auto-detect the best available AI provider"""
@@ -116,11 +116,42 @@ class AISecurityAssistant:
         Returns:
             AIResponse with explanation, steps, and recommendations
         """
-        alert_type = alert.get('type', alert.get('attack_type', 'unknown'))
+        # Get and normalize alert type - check ALL possible field names
+        alert_type_raw = alert.get('type') or alert.get('alert_type') or alert.get('attack_type') or 'unknown'
         
-        # Debug logging to trace alert type
-        logger.info(f"[AI] Received alert for remediation: type='{alert_type}', title='{alert.get('title', 'N/A')}'")
-        logger.debug(f"[AI] Full alert data: {alert}")
+        # If alert_type is 'security' (generic category), try to extract actual type from title
+        if alert_type_raw.lower() == 'security':
+            title = alert.get('title', '').lower()
+            if 'ddos' in title:
+                alert_type_raw = 'ddos'
+            elif 'c2' in title or 'beacon' in title:
+                alert_type_raw = 'c2_beacon'
+            elif 'port scan' in title or 'scan' in title:
+                alert_type_raw = 'port_scan'
+            elif 'land attack' in title:
+                alert_type_raw = 'land_attack'
+            elif 'spoof' in title:
+                alert_type_raw = 'ip_spoofing'
+            elif 'brute' in title:
+                alert_type_raw = 'brute_force'
+            elif 'sql' in title:
+                alert_type_raw = 'sql_injection'
+            elif 'xss' in title:
+                alert_type_raw = 'xss'
+            elif 'dns' in title and 'tunnel' in title:
+                alert_type_raw = 'dns_tunneling'
+            elif 'arp' in title:
+                alert_type_raw = 'arp_spoofing'
+            elif 'exfil' in title:
+                alert_type_raw = 'data_exfiltration'
+            elif 'flood' in title:
+                alert_type_raw = 'dos_flood'
+        
+        alert_type = alert_type_raw.lower().replace(' ', '_').replace('-', '_')
+        
+        # Debug logging - print what we're processing
+        print(f"[AI] Processing alert: raw_type='{alert_type_raw}', normalized='{alert_type}', title='{alert.get('title', 'N/A')}'")
+        logger.info(f"[AI] Alert type normalized: '{alert_type_raw}' -> '{alert_type}'")
         
         context = {
             'title': alert.get('title', ''),
@@ -134,7 +165,7 @@ class AISecurityAssistant:
         cache_key = f"{alert_type}_{context['severity']}"
         cached = self._check_cache(cache_key)
         if cached:
-            logger.info(f"[AI] Returning cached response for type='{alert_type}'")
+            print(f"[AI] Returning CACHED response for type='{alert_type}'")
             return cached
         
         # Route to appropriate provider
@@ -303,6 +334,8 @@ Remember: The user is NOT technical. Use simple language like you're explaining 
         """
         severity = context.get('severity', 'medium')
         source = context.get('source', 'unknown device')
+        
+        print(f"[AI] Looking up fallback response for: '{alert_type}'")
         
         # Comprehensive fallback responses for each attack type
         responses = {
@@ -626,20 +659,65 @@ Remember: The user is NOT technical. Use simple language like you're explaining 
                 technical_details="Malformed network packets detected - potential probe or attack attempt.",
                 provider='fallback'
             ),
+            
+            'session_hijack': AIResponse(
+                success=True,
+                explanation=f"Someone is attempting to take over an existing connection on your network. This is like someone intercepting your phone call and pretending to be you - they're trying to inject themselves into your network sessions.",
+                steps=[
+                    "Immediately check for unfamiliar devices on your network",
+                    "Disconnect any devices you don't recognize",
+                    "Change passwords for all important accounts (email, banking, social media)",
+                    "Run antivirus/malware scans on all devices",
+                    "Restart your router to clear any compromised sessions"
+                ],
+                severity_assessment="Critical - Act Now",
+                estimated_risk="Attackers could intercept your data, steal login sessions, or take control of your accounts. This is a serious active attack.",
+                prevention_tips=[
+                    "Use HTTPS websites whenever possible (look for the padlock)",
+                    "Enable two-factor authentication on all accounts",
+                    "Use a VPN for sensitive browsing",
+                    "Keep all devices and software updated"
+                ],
+                technical_details="TCP session injection detected - packets with data sent to non-established connections, indicating man-in-the-middle or session hijacking attempt.",
+                provider='fallback'
+            ),
+            
+            'data_exfiltration': AIResponse(
+                success=True,
+                explanation=f"A large amount of data is being sent from your network to an external location. This could mean your files, photos, or personal information are being stolen and uploaded to an attacker's server.",
+                steps=[
+                    "Identify the device at {source} sending the data",
+                    "Immediately disconnect that device from your network",
+                    "Run a full malware scan on the device",
+                    "Check for unfamiliar programs or browser extensions",
+                    "Review what data might have been accessed (documents, photos, passwords)"
+                ],
+                severity_assessment="Critical - Act Now",
+                estimated_risk="Your personal files, photos, passwords, or sensitive documents may be being stolen. Financial information could be compromised.",
+                prevention_tips=[
+                    "Install reputable antivirus software on all devices",
+                    "Be careful about what programs you download",
+                    "Use a firewall to monitor outgoing connections",
+                    "Regularly back up important files to a secure location"
+                ],
+                technical_details="Large outbound data transfer detected - possible data exfiltration to external server.",
+                provider='fallback'
+            ),
         }
         
         # Return specific response or generic one
-        logger.info(f"[AI] Fallback lookup for alert_type='{alert_type}'. Available types: {list(responses.keys())}")
+        print(f"[AI] Available types: {list(responses.keys())}")
+        print(f"[AI] Looking for: '{alert_type}' - Match: {alert_type in responses}")
         
         if alert_type in responses:
-            logger.info(f"[AI] Found specific fallback response for '{alert_type}'")
+            print(f"[AI] Found specific response for '{alert_type}'")
             response = responses[alert_type]
             # Format source IP into the steps
             response.steps = [step.format(source=source) for step in response.steps]
             return response
         
         # Generic fallback for unknown alert types
-        logger.warning(f"[AI] No specific response for '{alert_type}', using generic fallback")
+        print(f"[AI] No specific response for '{alert_type}', using GENERIC fallback")
         return AIResponse(
             success=True,
             explanation=f"A security event was detected from {source}. While the exact nature isn't immediately clear, it's worth investigating to ensure your network remains secure.",
@@ -743,19 +821,19 @@ Remember: The user is NOT technical. Use simple language like you're explaining 
         high = stats.get('high_alerts', 0)
         
         if critical > 0:
-            status = "🔴 Critical Issues Detected"
+            status = "[CRITICAL] Issues Detected"
             message = f"Your network has {critical} critical security issue{'s' if critical > 1 else ''} that need{'s' if critical == 1 else ''} immediate attention."
             action = "Review the critical alerts below and take action as soon as possible."
         elif high > 0:
-            status = "🟠 Attention Needed"
+            status = "[WARNING] Attention Needed"
             message = f"Your network has {high} high-priority alert{'s' if high > 1 else ''} that should be reviewed."
             action = "Check the alerts when you have a moment to ensure everything is secure."
         elif total_alerts > 0:
-            status = "🟡 Minor Concerns"
+            status = "[INFO] Minor Concerns"
             message = f"Your network detected {total_alerts} event{'s' if total_alerts > 1 else ''}, but nothing critical."
             action = "You can review these alerts at your convenience."
         else:
-            status = "🟢 All Clear"
+            status = "[OK] All Clear"
             message = "Your network looks healthy! No security threats detected."
             action = "Keep up the good work! Regular monitoring helps keep you safe."
         

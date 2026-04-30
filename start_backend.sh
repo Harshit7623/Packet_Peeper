@@ -4,6 +4,12 @@
 
 set -e  # Exit on error
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/backend"
+VENV_DIR="$SCRIPT_DIR/.venv"
+
+cd "$SCRIPT_DIR"
+
 echo "╔════════════════════════════════════════════════════════════╗"
 echo "║     🔒 PACKET PEEPER - BACKEND QUICK START SETUP          ║"
 echo "╚════════════════════════════════════════════════════════════╝"
@@ -18,14 +24,19 @@ NC='\033[0m' # No Color
 
 # Step 1: Check Python version
 echo -e "${BLUE}[1/5]${NC} Checking Python version..."
-python_version=$(python --version 2>&1 | grep -oP '(?<=Python )\d+\.\d+')
+PYTHON_BIN="python3"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+fi
+
+python_version=$($PYTHON_BIN --version 2>&1 | awk '{print $2}')
 echo -e "${GREEN}✓${NC} Python $python_version found"
 echo ""
 
 # Step 2: Create virtual environment (if needed)
-if [ ! -d "venv" ]; then
+if [ ! -d "$VENV_DIR" ]; then
     echo -e "${BLUE}[2/5]${NC} Creating virtual environment..."
-    python -m venv venv
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
     echo -e "${GREEN}✓${NC} Virtual environment created"
 else
     echo -e "${BLUE}[2/5]${NC} Virtual environment already exists"
@@ -35,22 +46,16 @@ echo ""
 
 # Step 3: Activate virtual environment and install dependencies
 echo -e "${BLUE}[3/5]${NC} Installing dependencies..."
-if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-    # Windows
-    source venv/Scripts/activate
-else
-    # Linux/macOS
-    source venv/bin/activate
-fi
+source "$VENV_DIR/bin/activate"
 
 pip install --upgrade pip -q
-pip install -r backend/requirements.txt -q
+pip install -r "$BACKEND_DIR/requirements.txt" -q
 echo -e "${GREEN}✓${NC} Dependencies installed"
 echo ""
 
 # Step 4: Run verification
 echo -e "${BLUE}[4/5]${NC} Verifying installation..."
-cd backend
+cd "$BACKEND_DIR"
 python verify_backend.py
 VERIFY_RESULT=$?
 echo ""
@@ -70,13 +75,13 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
     read -p "Enter interface name (e.g., Wi-Fi): " INTERFACE
 else
     echo "Available interfaces:"
-    ip link show | grep "^[0-9]" | awk '{print "  - " $2}' | sed 's/:$//'
+    ip link show | awk -F': ' '/^[0-9]+: /{print "  - " $2}'
     echo ""
-    read -p "Enter interface name (e.g., eth0): " INTERFACE
+    read -p "Enter interface name (press Enter for auto): " INTERFACE
 fi
 
 if [ -z "$INTERFACE" ]; then
-    INTERFACE="Wi-Fi"
+    INTERFACE="auto"
     echo -e "${YELLOW}⚠${NC} No interface specified, using default: $INTERFACE"
 fi
 
@@ -88,7 +93,7 @@ echo ""
 echo "Starting Packet Peeper backend..."
 echo -e "${YELLOW}→${NC} Interface: $INTERFACE"
 echo -e "${YELLOW}→${NC} Backend: http://localhost:5000"
-echo -e "${YELLOW}→${NC} Logs: logs/packet_peeper.log"
+echo -e "${YELLOW}→${NC} Logs: backend/logs/packet_peeper.log"
 echo ""
 echo "To stop the server, press Ctrl+C"
 echo ""

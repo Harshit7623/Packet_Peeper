@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { useState, useEffect } from "react";
 import { useMonitorStore } from "@/store/monitorStore";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiService } from "@/services/apiService";
@@ -12,6 +13,7 @@ export function Header() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const { isConnected, stats, alerts } = useMonitorStore();
   const { theme, toggleTheme } = useTheme();
+  const { user, authEnabled, logout } = useAuth();
   const [, setLocation] = useLocation();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -53,6 +55,17 @@ export function Header() {
       useMonitorStore.getState().setAlerts(alerts.filter(a => a.id !== alertId));
     } catch (err) {
       console.error('Failed to dismiss:', err);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      setShowProfile(false);
+      if (authEnabled) {
+        setLocation('/login');
+      }
     }
   };
 
@@ -152,7 +165,7 @@ export function Header() {
                 <Bell className="w-4 h-4" />
                 {unreadAlerts.length > 0 && (
                   <motion.span 
-                    className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
+                    className="absolute top-1.5 right-1.5 min-w-4 h-4 px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center"
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: "spring", stiffness: 500 }}
@@ -239,7 +252,9 @@ export function Header() {
                 <User className="w-4 h-4" />
               </div>
               <div className="hidden md:block">
-                <div className="text-[10px] font-black text-foreground tracking-widest leading-none">OPERATOR</div>
+                <div className="text-[10px] font-black text-foreground tracking-widest leading-none">
+                  {(user?.username || 'OPERATOR').toUpperCase()}
+                </div>
                 <div className="text-[8px] text-primary font-bold uppercase tracking-tighter mt-1 opacity-70">
                   {isConnected ? "ONLINE" : "OFFLINE"}
                 </div>
@@ -277,9 +292,10 @@ export function Header() {
                     <Button 
                       variant="ghost" 
                       className="w-full justify-start gap-2 text-sm text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                      onClick={authEnabled ? handleLogout : undefined}
                     >
                       <LogOut size={16} />
-                      Exit
+                      {authEnabled ? 'Sign Out' : 'Exit'}
                     </Button>
                   </div>
                 </motion.div>

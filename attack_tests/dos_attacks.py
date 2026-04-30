@@ -357,7 +357,7 @@ class DoSAttacks:
 
 def main():
     parser = argparse.ArgumentParser(description="DoS Attack Simulator for Detection Testing")
-    parser.add_argument("--target", "-t", default="127.0.0.1", help="Target IP address")
+    parser.add_argument("--target", "-t", default=None, help="Target IP address (NOT 127.0.0.1! Use router IP)")
     parser.add_argument("--port", "-p", type=int, default=80, help="Target port")
     parser.add_argument("--type", "-T", default="synflood",
                         choices=["synflood", "udpflood", "icmpflood", "slowloris", 
@@ -367,6 +367,21 @@ def main():
     parser.add_argument("--rate", "-r", type=int, default=100, help="Packets per second")
     
     args = parser.parse_args()
+    
+    # Check target
+    if args.target is None:
+        print("\n" + "=" * 60)
+        print("  ⚠️  ERROR: You must specify a target!")
+        print("  DO NOT use 127.0.0.1 - loopback traffic won't be captured!")
+        print("  Use: python dos_attacks.py --target 192.168.1.1")
+        print("=" * 60)
+        return
+    
+    if args.target in ["127.0.0.1", "localhost"]:
+        print("\n⚠️  WARNING: 127.0.0.1 won't be captured by PacketPeeper!")
+        print("Use your router IP instead (check: ipconfig | findstr Gateway)")
+        if input("Continue anyway? (y/N): ").lower() != 'y':
+            return
     
     print("=" * 60)
     print("  DoS ATTACK SIMULATOR - Detection Testing Tool")

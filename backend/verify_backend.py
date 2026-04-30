@@ -24,7 +24,6 @@ def check_required_files():
         "packet_sniffer.py",
         "network_security_monitor.py",
         "requirements.txt",
-        ".env",
         "config/config.py",
         "services/database_services.py",
         "services/packet_processor.py",
@@ -39,6 +38,13 @@ def check_required_files():
         else:
             print(f"❌ {file_path} NOT FOUND")
             all_exist = False
+
+    # .env can live in backend/.env or project-root .env
+    if Path(".env").exists() or Path("../.env").exists():
+        print("✅ .env")
+    else:
+        print("❌ .env NOT FOUND")
+        all_exist = False
     
     return all_exist
 
@@ -195,7 +201,7 @@ def main():
     if all_passed:
         print("✅ ALL CHECKS PASSED - Backend is ready to launch!")
         print("\nTo start the backend, run:")
-        print("  python app.py Wi-Fi\n")
+        print("  python app.py auto\n")
         return 0
     else:
         print("❌ SOME CHECKS FAILED - Please fix issues above\n")

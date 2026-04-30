@@ -5,6 +5,7 @@
 
 import { io, Socket } from 'socket.io-client';
 import { useMonitorStore } from '@/store/monitorStore';
+import { apiService } from '@/services/apiService';
 
 class SocketService {
   private socket: Socket | null = null;
@@ -34,6 +35,9 @@ class SocketService {
           withCredentials: false,
           forceNew: true,
           timeout: 20000,
+          auth: {
+            token: apiService.getAuthToken() || '',
+          },
         });
 
         // Connection events
@@ -130,7 +134,7 @@ class SocketService {
     this.socket.on('sniffing_status', (data: any) => {
       console.log('Sniffing status:', data);
       if (data.status === 'started' || data.status === 'already_running') {
-        useMonitorStore.getState().setSniffing(true, data.interface || 'Wi-Fi');
+        useMonitorStore.getState().setSniffing(true, data.interface || 'auto');
       } else if (data.status === 'stopped' || data.status === 'not_running') {
         useMonitorStore.getState().setSniffing(false, null);
       }

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============== PostgreSQL Database ==============
   postgres:
@@ -25,7 +23,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: backend/Dockerfile
     container_name: packet_peeper_backend
     depends_on:
       postgres:
@@ -49,8 +47,8 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
+      - ./backend/logs:/app/backend/logs
+      - ./backend/data:/app/backend/data
     networks:
       - packet_peeper_network
     # Note: Requires --cap-add NET_RAW for packet capture
@@ -62,32 +60,15 @@ services:
   # ============== React Frontend (Optional) ==============
   frontend:
     build:
-      context: ./my-app
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     container_name: packet_peeper_frontend
     ports:
-      - "3000:3000"
+      - "5173:80"
     environment:
-      REACT_APP_API_URL: http://localhost:5000
+      VITE_BACKEND_URL: http://localhost:5000
     depends_on:
       - backend
-    networks:
-      - packet_peeper_network
-    restart: unless-stopped
-
-  # ============== Nginx Reverse Proxy (Optional) ==============
-  nginx:
-    image: nginx:alpine
-    container_name: packet_peeper_nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro
-    depends_on:
-      - backend
-      - frontend
     networks:
       - packet_peeper_network
     restart: unless-stopped

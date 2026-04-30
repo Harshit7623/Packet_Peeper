@@ -12,13 +12,14 @@ python-engineio==4.8.0
 # Async and threading support
 eventlet==0.35.2
 
-# Database (optional, for future use)
-psycopg2-binary==2.9.9
-sqlalchemy==2.0.27
-alembic==1.13.1
+# Database (optional)
+# psycopg2-binary has limited support on newer Python versions.
+psycopg2-binary==2.9.9; python_version < "3.14"
+psycopg[binary]==3.2.13; python_version >= "3.14"
+sqlalchemy>=2.0.40,<3.0.0
+alembic>=1.14.0,<2.0.0
 
-# Data analysis and reporting
-pandas==2.1.4
+# Reporting
 reportlab==4.1.0
 fpdf==1.7.2
 

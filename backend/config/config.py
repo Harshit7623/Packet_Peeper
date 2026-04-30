@@ -4,6 +4,7 @@ Centralized settings for all subsystems
 """
 
 import os
+import sys
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -36,18 +37,25 @@ DB_PORT = int(os.getenv("DB_PORT", 5432))
 DB_USER = os.getenv("DB_USER", "packet_peeper_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "secure_password_change_me")
 DB_NAME = os.getenv("DB_NAME", "packet_peeper_db")
+DB_DRIVER = os.getenv("DB_DRIVER", "auto")  # auto, psycopg2, psycopg
 
 # SQLite fallback
 SQLITE_PATH = DATA_DIR / "packet_peeper.db"
 
 # Database URL builder
 if DB_ENGINE == "postgresql":
-    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    if DB_DRIVER == "auto":
+        DB_DRIVER = "psycopg" if sys.version_info >= (3, 14) else "psycopg2"
+
+    if DB_DRIVER in {"psycopg2", "psycopg"}:
+        DATABASE_URL = f"postgresql+{DB_DRIVER}://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    else:
+        DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 else:
     DATABASE_URL = f"sqlite:///{SQLITE_PATH}"
 
 # ============== PACKET CAPTURE ==============
-CAPTURE_INTERFACE = os.getenv("CAPTURE_INTERFACE", "Wi-Fi")  # Default; overridden by CLI arg
+CAPTURE_INTERFACE = os.getenv("CAPTURE_INTERFACE", "auto")  # Default; overridden by CLI arg
 PACKET_BUFFER_SIZE = int(os.getenv("PACKET_BUFFER_SIZE", 10000))
 MAX_PACKET_HISTORY = int(os.getenv("MAX_PACKET_HISTORY", 100000))
 PACKET_TIMEOUT = int(os.getenv("PACKET_TIMEOUT", 300))  # seconds
@@ -64,6 +72,12 @@ DNS_TTL_DEFAULT = int(os.getenv("DNS_TTL_DEFAULT", 300))
 # ============== SECURITY & ALERTS ==============
 ALERT_MAX_STORED = int(os.getenv("ALERT_MAX_STORED", 20))  # Reduced from 100 to 20
 ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", 60))  # Increased from 10 to 60
+
+# ============== DETECTION TUNING ==============
+DETECTION_PROFILE = os.getenv("DETECTION_PROFILE", "balanced")  # strict, balanced, sensitive, test
+DETECTION_DEBUG = os.getenv("DETECTION_DEBUG", "False").lower() == "true"
+CAPTURE_DEBUG = os.getenv("CAPTURE_DEBUG", "False").lower() == "true"
+AI_DEBUG = os.getenv("AI_DEBUG", "False").lower() == "true"
 
 # Threat detection thresholds
 THREAT_THRESHOLDS = {
@@ -156,14 +170,14 @@ def validate_config():
             errors.append("ENABLE_AUTH=True but JWT_SECRET is default")
     
     if errors:
-        print("\n⚠️  Configuration Warnings:")
+        print("\n[WARN] Configuration Warnings:")
         for error in errors:
             print(f"  - {error}")
     
     return len(errors) == 0
 
 if __name__ == "__main__":
-    print("📋 Packet Peeper Configuration")
+    print("[Config] Packet Peeper Configuration")
     print(f"Environment: {FLASK_ENV}")
     print(f"Database: {DB_ENGINE} @ {DB_HOST}:{DB_PORT}")
     print(f"Capture Interface: {CAPTURE_INTERFACE}")

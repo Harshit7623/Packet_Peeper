@@ -24,7 +24,6 @@ export default function Logs() {
   const { logs, setLogs } = useMonitorStore();
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [filter, setFilter] = useState<'all' | 'info' | 'warning' | 'error'>('all');
   const [selectedLog, setSelectedLog] = useState<LogDetail | null>(null);
 
@@ -51,18 +50,8 @@ export default function Logs() {
     }
   };
 
-  const handleDeleteLog = (id: number) => {
-    setDeletingId(id);
-    setTimeout(() => {
-      // Remove from local state
-      const newLogs = logs.filter((_, i) => i !== id);
-      setLogs(newLogs);
-      setDeletingId(null);
-    }, 300);
-  };
-
-  // Use real logs if available, otherwise show demo data
-  const displayLogs: LogDetail[] = logs.length > 0 ? logs.map((log, i) => ({
+  // Use real logs only
+  const displayLogs: LogDetail[] = logs.map((log, i) => ({
     id: i,
     time: new Date(log.timestamp).toLocaleTimeString(),
     event: log.level.toUpperCase(),
@@ -70,13 +59,7 @@ export default function Logs() {
     status: log.level === 'error' ? 'blocked' : log.level === 'warning' ? 'warning' : 'info',
     source: log.source || 'System',
     rawData: log
-  })) : [
-    { id: 1, time: "10:45 AM", event: "New Device Connected", details: "Guest-Phone joined the Wi-Fi", status: "info", source: "Network Scanner" },
-    { id: 2, time: "10:30 AM", event: "Security Scan Finished", details: "No threats found during scheduled scan", status: "success", source: "Security Monitor" },
-    { id: 3, time: "09:15 AM", event: "Connection Blocked", details: "Unrecognized attempt from 45.22.19.12 was stopped", status: "blocked", source: "Firewall" },
-    { id: 4, time: "08:00 AM", event: "System Update", details: "Security database updated to version 2.4.5", status: "info", source: "Update Manager" },
-    { id: 5, time: "Yesterday", event: "Power Outage Detected", details: "System successfully switched to backup battery", status: "warning", source: "Power Monitor" },
-  ];
+  }));
 
   const filteredLogs = displayLogs
     .filter(log => filter === 'all' || log.status === filter || (filter === 'error' && log.status === 'blocked'))
@@ -189,18 +172,15 @@ export default function Logs() {
             <div className="divide-y divide-border/30">
               <AnimatePresence mode="popLayout">
                 {filteredLogs.map((log, index) => (
-                  <motion.div 
-                    key={log.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ 
-                      opacity: deletingId === log.id ? 0 : 1, 
-                      x: deletingId === log.id ? 100 : 0 
-                    }}
-                    exit={{ opacity: 0, x: 100 }}
-                    transition={{ duration: 0.3, delay: index * 0.03 }}
-                    layout
-                    className="p-6 hover:bg-muted/30 transition-colors group"
-                  >
+                    <motion.div 
+                      key={log.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 100 }}
+                      transition={{ duration: 0.3, delay: index * 0.03 }}
+                      layout
+                      className="p-6 hover:bg-muted/30 transition-colors group"
+                    >
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div className="flex items-start gap-4">
                         <motion.div 
@@ -228,16 +208,6 @@ export default function Logs() {
                             <Info size={14} /> Details
                           </Button>
                         </motion.div>
-                        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            className="rounded-full text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={() => handleDeleteLog(log.id)}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </motion.div>
                       </div>
                     </div>
                   </motion.div>
@@ -251,15 +221,13 @@ export default function Logs() {
                 animate={{ opacity: 1 }}
               >
                 <History size={48} className="text-muted-foreground mx-auto mb-4 opacity-50" />
-                <p className="text-muted-foreground">No logs matching your search.</p>
+                <p className="text-muted-foreground">
+                  {logs.length === 0 ? "No logs captured yet." : "No logs matching your search."}
+                </p>
               </motion.div>
             )}
-            <div className="p-6 bg-muted/20 border-t border-border/50 text-center">
-              <motion.div whileHover={{ scale: 1.02 }}>
-                <Button variant="link" className="text-primary font-bold uppercase tracking-widest text-xs">
-                  Load Older History
-                </Button>
-              </motion.div>
+            <div className="p-6 bg-muted/20 border-t border-border/50 text-center text-xs text-muted-foreground font-mono uppercase tracking-widest">
+              Showing latest {displayLogs.length} events
             </div>
           </Card>
         </motion.div>

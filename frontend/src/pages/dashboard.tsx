@@ -63,9 +63,9 @@ export default function Dashboard() {
         // Optimistically update UI
         setSniffing(false, null);
       } else {
-        socketService.startSniffing('Wi-Fi');
+        socketService.startSniffing('auto');
         // Optimistically update UI
-        setSniffing(true, 'Wi-Fi');
+        setSniffing(true, 'auto');
       }
     } catch (err) {
       console.error('Failed to toggle monitoring:', err);

@@ -234,12 +234,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python run_all_attacks.py --target 192.168.1.100 --quick
-  python run_all_attacks.py --target 10.0.0.1 --full
-  python run_all_attacks.py --target localhost --interactive
+  python run_all_attacks.py --target 192.168.1.1 --quick   (your router)
+  python run_all_attacks.py --target 10.0.0.1 --full       (another device)
+  
+NOTE: Do NOT use 127.0.0.1! Loopback traffic won't be captured by PacketPeeper!
+      Use your router IP (find with: ipconfig | findstr Gateway)
         """
     )
-    parser.add_argument("--target", "-t", default="127.0.0.1", help="Target IP address")
+    parser.add_argument("--target", "-t", default=None, help="Target IP address (NOT 127.0.0.1! Use your router IP)")
     parser.add_argument("--port", "-p", type=int, default=80, help="Target port (for HTTP attacks)")
     parser.add_argument("--quick", "-q", action="store_true", help="Run quick test (shorter duration)")
     parser.add_argument("--full", "-f", action="store_true", help="Run full comprehensive test")
@@ -247,6 +249,29 @@ Examples:
     parser.add_argument("--no-warning", action="store_true", help="Skip warning prompt")
     
     args = parser.parse_args()
+    
+    # Check if target is specified
+    if args.target is None:
+        print(f"\n{Colors.FAIL}" + "=" * 60)
+        print("  ⚠️  ERROR: You must specify a target!")
+        print("=" * 60 + f"{Colors.ENDC}")
+        print(f"\n{Colors.WARNING}  DO NOT use 127.0.0.1 - loopback traffic won't be captured!{Colors.ENDC}")
+        print(f"\n  Use your router IP or another device on your network:")
+        print(f"    python run_all_attacks.py --target 192.168.1.1 --quick")
+        print(f"\n  To find your router IP, run:")
+        print(f"    ipconfig | findstr Gateway\n")
+        sys.exit(1)
+    
+    if args.target == "127.0.0.1" or args.target == "localhost":
+        print(f"\n{Colors.FAIL}" + "=" * 60)
+        print("  ⚠️  WARNING: Using localhost/127.0.0.1!")
+        print("=" * 60 + f"{Colors.ENDC}")
+        print(f"\n{Colors.WARNING}  Loopback traffic doesn't go through your network interface,")
+        print(f"  so PacketPeeper will NOT capture these packets!{Colors.ENDC}")
+        print(f"\n  Use your router IP instead (check: ipconfig | findstr Gateway)")
+        proceed = input(f"\n{Colors.WARNING}  Continue anyway? (y/N): {Colors.ENDC}")
+        if proceed.lower() != 'y':
+            sys.exit(0)
     
     print_banner()
     

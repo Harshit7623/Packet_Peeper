@@ -30,6 +30,26 @@ class ApplicationAttacks:
         self.port = port
         self.base_url = f"http://{target}:{port}" if port != 443 else f"https://{target}"
         self.session = requests.Session()
+        # Set very short timeout to prevent hanging
+        self.session.timeout = 1
+        
+    def _send_http_raw(self, path: str, method: str = "GET", data: str = "") -> bool:
+        """Send raw HTTP request via socket (faster, no waiting for response)"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.3)
+            sock.connect((self.target, self.port))
+            
+            if method == "GET":
+                request = f"GET {path} HTTP/1.1\r\nHost: {self.target}\r\nConnection: close\r\n\r\n"
+            else:
+                request = f"POST {path} HTTP/1.1\r\nHost: {self.target}\r\nContent-Length: {len(data)}\r\nContent-Type: application/x-www-form-urlencoded\r\nConnection: close\r\n\r\n{data}"
+            
+            sock.send(request.encode())
+            sock.close()
+            return True
+        except:
+            return True  # Count as sent even if connection failed
         
     def sql_injection(self, count: int = 50) -> None:
         """
@@ -87,14 +107,14 @@ class ApplicationAttacks:
             endpoint = random.choice(endpoints)
             
             try:
-                url = f"{self.base_url}{endpoint}"
-                self.session.get(url, timeout=5, verify=False)
+                # Use raw socket for faster execution
+                self._send_http_raw(endpoint)
                 request_count += 1
                 
                 if request_count % 10 == 0:
                     print(f"    [SQLi] Sent {request_count} injection attempts...")
                     
-                time.sleep(0.1)
+                time.sleep(0.05)
             except:
                 request_count += 1  # Count even if request fails
                 
@@ -152,14 +172,13 @@ class ApplicationAttacks:
             endpoint = random.choice(endpoints)
             
             try:
-                url = f"{self.base_url}{endpoint}"
-                self.session.get(url, timeout=5, verify=False)
+                self._send_http_raw(endpoint)
                 request_count += 1
                 
                 if request_count % 10 == 0:
                     print(f"    [XSS] Sent {request_count} XSS attempts...")
                     
-                time.sleep(0.1)
+                time.sleep(0.05)
             except:
                 request_count += 1
                 
@@ -216,14 +235,13 @@ class ApplicationAttacks:
             endpoint = random.choice(endpoints)
             
             try:
-                url = f"{self.base_url}{endpoint}"
-                self.session.get(url, timeout=5, verify=False)
+                self._send_http_raw(endpoint)
                 request_count += 1
                 
                 if request_count % 10 == 0:
                     print(f"    [CMD] Sent {request_count} command injection attempts...")
                     
-                time.sleep(0.15)
+                time.sleep(0.05)
             except:
                 request_count += 1
                 
@@ -272,14 +290,13 @@ class ApplicationAttacks:
             endpoint = random.choice(endpoints)
             
             try:
-                url = f"{self.base_url}{endpoint}"
-                self.session.get(url, timeout=5, verify=False)
+                self._send_http_raw(endpoint)
                 request_count += 1
                 
                 if request_count % 10 == 0:
                     print(f"    [LFI] Sent {request_count} path traversal attempts...")
                     
-                time.sleep(0.1)
+                time.sleep(0.05)
             except:
                 request_count += 1
                 
@@ -294,6 +311,7 @@ class ApplicationAttacks:
         print(f"\n[*] Starting Brute Force Attack on {self.base_url}")
         print(f"[*] Count: {count} attempts")
         print("[*] Expected Detection: BRUTE_FORCE / LOGIN_ATTACK")
+        print("[*] Note: Using raw sockets to ensure traffic is generated even without a web server")
         
         # Common usernames
         usernames = ["admin", "root", "user", "test", "administrator", "guest", "operator"]
@@ -307,23 +325,36 @@ class ApplicationAttacks:
         
         attempt_count = 0
         
+        # Use common brute-force target ports
+        target_ports = [22, 23, 21, 3389, 80, 443, 3306, 5432]
+        
         for _ in range(count):
             username = random.choice(usernames)
             password = random.choice(passwords)
+            target_port = random.choice(target_ports)
             
             try:
-                url = f"{self.base_url}/login"
-                self.session.post(url, data={
-                    "username": username,
-                    "password": password
-                }, timeout=5, verify=False)
+                # Use raw socket connection to generate traffic
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.5)  # Short timeout
+                
+                try:
+                    sock.connect((self.target, target_port))
+                    # Send login-like data
+                    login_data = f"USER {username}\r\nPASS {password}\r\n"
+                    sock.send(login_data.encode())
+                except (socket.timeout, ConnectionRefusedError, OSError):
+                    pass  # Expected - we're just generating traffic
+                finally:
+                    sock.close()
+                
                 attempt_count += 1
                 
                 if attempt_count % 20 == 0:
                     print(f"    [BRUTE] Sent {attempt_count} login attempts...")
                     
-                time.sleep(0.05)  # Fast attempts
-            except:
+                time.sleep(0.02)  # Fast attempts
+            except Exception as e:
                 attempt_count += 1
                 
         print(f"[+] Brute Force complete - Sent {attempt_count} attempts")
@@ -359,14 +390,13 @@ class ApplicationAttacks:
             directory = random.choice(directories)
             
             try:
-                url = f"{self.base_url}/{directory}"
-                self.session.get(url, timeout=5, verify=False)
+                self._send_http_raw(f"/{directory}")
                 request_count += 1
                 
                 if request_count % 20 == 0:
                     print(f"    [ENUM] Sent {request_count} directory probes...")
                     
-                time.sleep(0.05)
+                time.sleep(0.02)
             except:
                 request_count += 1
                 
@@ -421,7 +451,7 @@ class ApplicationAttacks:
 
 def main():
     parser = argparse.ArgumentParser(description="Application Layer Attack Simulator")
-    parser.add_argument("--target", "-t", default="127.0.0.1", help="Target IP/hostname")
+    parser.add_argument("--target", "-t", default=None, help="Target IP/hostname (e.g., your router IP like 192.168.1.1)")
     parser.add_argument("--port", "-p", type=int, default=80, help="Target port")
     parser.add_argument("--type", "-T", default="sqli",
                         choices=["sqli", "xss", "cmd", "lfi", "brute", "enum", "smuggle", "all"],
@@ -429,6 +459,33 @@ def main():
     parser.add_argument("--count", "-c", type=int, default=50, help="Number of requests")
     
     args = parser.parse_args()
+    
+    # Warn if no target specified
+    if args.target is None:
+        print("\n" + "=" * 60)
+        print("  ⚠️  ERROR: You must specify a target!")
+        print("=" * 60)
+        print("  DO NOT use 127.0.0.1 - loopback traffic won't be captured!")
+        print("  ")
+        print("  Use your router IP or another device on your network:")
+        print("    python application_attacks.py --target 192.168.1.1 --type all")
+        print("  ")
+        print("  To find your router IP, run: ipconfig | findstr Gateway")
+        print("=" * 60)
+        return
+    
+    if args.target == "127.0.0.1" or args.target == "localhost":
+        print("\n" + "=" * 60)
+        print("  ⚠️  WARNING: Using localhost/127.0.0.1!")
+        print("=" * 60)
+        print("  Loopback traffic doesn't go through your network interface,")
+        print("  so PacketPeeper will NOT capture these packets!")
+        print("  ")
+        print("  Use your router IP instead: 192.168.1.1 (or check ipconfig)")
+        print("=" * 60)
+        proceed = input("\n  Continue anyway? (y/N): ")
+        if proceed.lower() != 'y':
+            return
     
     print("=" * 60)
     print("  APPLICATION ATTACK SIMULATOR - Detection Testing Tool")

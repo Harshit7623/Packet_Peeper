@@ -17,7 +17,112 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any
 
+from config.config import DETECTION_PROFILE, DETECTION_DEBUG
+
 logger = logging.getLogger(__name__)
+
+PROFILE_THRESHOLDS = {
+    "strict": {
+        "port_scan_count": 15,
+        "port_scan_window": 90,
+        "stealth_scan_count": 8,
+        "syn_flood_rate": 100,
+        "udp_flood_rate": 150,
+        "icmp_flood_rate": 60,
+        "flood_window": 5,
+        "ddos_sources": 20,
+        "ddos_window": 20,
+        "dns_query_length": 80,
+        "dns_subdomain_count": 8,
+        "dns_query_rate": 80,
+        "brute_force_attempts": 12,
+        "brute_force_window": 180,
+        "beacon_regularity": 0.1,
+        "beacon_min_callbacks": 8,
+        "session_injection_count": 6,
+        "session_injection_window": 60,
+        "exfil_size_bytes": 2 * 1024 * 1024,
+        "exfil_window": 300,
+        "alert_cooldown": 120,
+        "max_alerts_per_type": 3,
+        "max_total_alerts": 30,
+    },
+    "balanced": {
+        "port_scan_count": 10,
+        "port_scan_window": 60,
+        "stealth_scan_count": 6,
+        "syn_flood_rate": 50,
+        "udp_flood_rate": 80,
+        "icmp_flood_rate": 30,
+        "flood_window": 5,
+        "ddos_sources": 15,
+        "ddos_window": 15,
+        "dns_query_length": 70,
+        "dns_subdomain_count": 7,
+        "dns_query_rate": 40,
+        "brute_force_attempts": 7,
+        "brute_force_window": 120,
+        "beacon_regularity": 0.2,
+        "beacon_min_callbacks": 6,
+        "session_injection_count": 4,
+        "session_injection_window": 30,
+        "exfil_size_bytes": 1024 * 1024,
+        "exfil_window": 120,
+        "alert_cooldown": 60,
+        "max_alerts_per_type": 4,
+        "max_total_alerts": 50,
+    },
+    "sensitive": {
+        "port_scan_count": 6,
+        "port_scan_window": 30,
+        "stealth_scan_count": 3,
+        "syn_flood_rate": 20,
+        "udp_flood_rate": 40,
+        "icmp_flood_rate": 15,
+        "flood_window": 5,
+        "ddos_sources": 8,
+        "ddos_window": 10,
+        "dns_query_length": 60,
+        "dns_subdomain_count": 6,
+        "dns_query_rate": 30,
+        "brute_force_attempts": 5,
+        "brute_force_window": 60,
+        "beacon_regularity": 0.15,
+        "beacon_min_callbacks": 5,
+        "session_injection_count": 3,
+        "session_injection_window": 30,
+        "exfil_size_bytes": 500 * 1024,
+        "exfil_window": 60,
+        "alert_cooldown": 30,
+        "max_alerts_per_type": 6,
+        "max_total_alerts": 75,
+    },
+    "test": {
+        "port_scan_count": 5,
+        "port_scan_window": 30,
+        "stealth_scan_count": 3,
+        "syn_flood_rate": 10,
+        "udp_flood_rate": 20,
+        "icmp_flood_rate": 10,
+        "flood_window": 5,
+        "ddos_sources": 5,
+        "ddos_window": 10,
+        "dns_query_length": 50,
+        "dns_subdomain_count": 5,
+        "dns_query_rate": 20,
+        "brute_force_attempts": 4,
+        "brute_force_window": 60,
+        "beacon_regularity": 0.25,
+        "beacon_min_callbacks": 4,
+        "session_injection_count": 2,
+        "session_injection_window": 20,
+        "exfil_size_bytes": 200 * 1024,
+        "exfil_window": 60,
+        "alert_cooldown": 10,
+        "max_alerts_per_type": 10,
+        "max_total_alerts": 100,
+    },
+}
 
 
 class NetworkSecurityMonitor:
@@ -25,6 +130,9 @@ class NetworkSecurityMonitor:
     
     def __init__(self, alert_callback: Optional[Callable] = None):
         self.alert_callback = alert_callback
+        self.debug = DETECTION_DEBUG
+        self.default_profile = self._normalize_profile(DETECTION_PROFILE)
+        self.profile = self.default_profile
         
         # ========== TRACKING DATA STRUCTURES ==========
         # Port scan detection
@@ -54,6 +162,13 @@ class NetworkSecurityMonitor:
         # Beacon detection
         self.beacon_tracker = defaultdict(list)  # Track periodic connections
         
+        # Session hijacking detection
+        self.established_sessions = {}  # Track established TCP sessions (key: src:sport-dst:dport)
+        self.injection_attempts = defaultdict(lambda: {'count': 0, 'timestamps': []})
+        
+        # Data exfiltration tracking
+        self.outbound_transfers = defaultdict(lambda: {'bytes': 0, 'timestamps': [], 'first_seen': 0})
+        
         # Alert history (prevent duplicates)
         self.alert_history = {}
         self.alert_counts = defaultdict(int)
@@ -68,44 +183,53 @@ class NetworkSecurityMonitor:
         # Attack logs
         self.attack_logs = []
         
-        # ========== DETECTION THRESHOLDS (lowered for testing) ==========
-        self.thresholds = {
-            # Port scanning
-            'port_scan_count': 5,            # Unique ports in window (lowered from 10)
-            'port_scan_window': 60,          # Time window (seconds)
-            'stealth_scan_count': 3,         # Lower threshold for stealth scans
-            
-            # Flood detection
-            'syn_flood_rate': 20,            # SYN packets per second (lowered from 50)
-            'udp_flood_rate': 30,            # UDP packets per second (lowered from 100)
-            'icmp_flood_rate': 15,           # ICMP packets per second (lowered from 30)
-            'flood_window': 5,               # Detection window (seconds)
-            
-            # DDoS detection
-            'ddos_sources': 5,               # Unique sources hitting same target (lowered from 10)
-            'ddos_window': 10,               # Detection window
-            
-            # DNS tunneling
-            'dns_query_length': 40,          # Suspicious query length (lowered from 50)
-            'dns_subdomain_count': 4,        # Subdomains in query (lowered from 5)
-            'dns_query_rate': 10,            # Queries per minute from same source (lowered from 20)
-            
-            # Brute force
-            'brute_force_attempts': 5,       # Attempts in window (lowered from 10)
-            'brute_force_window': 60,        # Time window
-            
-            # Beacon detection
-            'beacon_regularity': 0.3,        # Timing regularity threshold (raised for easier detection)
-            'beacon_min_callbacks': 4,       # Minimum callbacks to detect beacon (lowered from 5)
-            
-            # Alert cooldown - INCREASED to prevent spam
-            'alert_cooldown': 60,            # Seconds between same alerts (increased from 10)
-            'max_alerts_per_type': 3,        # Max alerts per attack type
-            'max_total_alerts': 20,          # Total alerts to keep
-        }
+        # ========== DETECTION THRESHOLDS (profile-based) ==========
+        self.thresholds = self._get_profile_thresholds(self.profile)
         
-        logger.info("🛡️ NetworkSecurityMonitor initialized with advanced detection")
-        print("🛡️ NetworkSecurityMonitor initialized - Ready to detect attacks!")
+        logger.info("[Security] NetworkSecurityMonitor initialized with advanced detection")
+        if self.debug:
+            logger.debug("[Security] NetworkSecurityMonitor initialized - Ready to detect attacks!")
+
+    def _normalize_profile(self, profile: Optional[str]) -> str:
+        if not profile:
+            return "balanced"
+
+        normalized = str(profile).strip().lower()
+        return normalized if normalized in PROFILE_THRESHOLDS else "balanced"
+
+    def _get_profile_thresholds(self, profile: str) -> Dict[str, Any]:
+        base = PROFILE_THRESHOLDS.get(profile, PROFILE_THRESHOLDS["balanced"])
+        return dict(base)
+
+    def set_profile(self, profile: str) -> str:
+        """Apply a predefined detection profile."""
+        normalized = self._normalize_profile(profile)
+        self.profile = normalized
+        self.thresholds = self._get_profile_thresholds(normalized)
+        logger.info(f"[Security] Detection profile set to {normalized}")
+        return normalized
+
+    def get_profile(self) -> str:
+        return self.profile
+
+    def get_thresholds(self) -> Dict[str, Any]:
+        return dict(self.thresholds)
+
+    def _debug_log(self, message: str):
+        if self.debug:
+            logger.debug(message)
+
+    def update_thresholds(self, overrides: Dict[str, Any]) -> Dict[str, Any]:
+        """Update thresholds with validated overrides."""
+        if not overrides:
+            return self.get_thresholds()
+
+        for key, value in overrides.items():
+            if key in self.thresholds and isinstance(value, (int, float)):
+                self.thresholds[key] = value
+
+        logger.info("[Security] Detection thresholds updated")
+        return self.get_thresholds()
 
     def reset_counters(self):
         """Reset all alert counters and history - call when clearing alerts"""
@@ -119,7 +243,17 @@ class NetworkSecurityMonitor:
         self.packet_stats = {
             'total': 0, 'malicious': 0, 'suspicious': 0, 'clean': 0, 'protocols': {}
         }
-        logger.info("🔄 NetworkSecurityMonitor counters reset")
+        logger.info("[Security] NetworkSecurityMonitor counters reset")
+    
+    def enable_test_mode(self):
+        """Enable test mode with lower thresholds for easier attack detection during testing"""
+        self.set_profile("test")
+        logger.info("[TEST] Detection profile set to test")
+    
+    def disable_test_mode(self):
+        """Disable test mode and restore production thresholds"""
+        self.set_profile(self.default_profile)
+        logger.info("[Security] Detection profile restored to default")
 
     def set_alert_callback(self, callback: Callable):
         """Set callback function for real-time alerts"""
@@ -141,8 +275,13 @@ class NetworkSecurityMonitor:
             dst_port = packet.get('dst_port', 0)
             protocol = packet.get('protocol', '').upper()
             payload = packet.get('payload', '') or packet.get('raw_data', '')
+            payload_size = len(str(payload)) if payload else 0
             timestamp = time.time()
             tcp_flags = packet.get('tcp_flags', 0)
+            
+            # DEBUG: Log all TCP packets with their flags
+            if protocol == 'TCP':
+                self._debug_log(f"[Security] TCP: {src_ip}:{src_port} -> {dst_ip}:{dst_port} flags={tcp_flags}")
             
             # Convert tcp_flags to int if string
             if isinstance(tcp_flags, str):
@@ -155,60 +294,88 @@ class NetworkSecurityMonitor:
             if not src_ip:
                 return alerts
             
+            # Track if a SPECIFIC attack was detected (to prevent flood overlap)
+            specific_attack_found = False
+            
+            # ========== SESSION HIJACKING DETECTION (HIGH PRIORITY) ==========
+            if protocol == 'TCP' and payload:
+                hijack_alert = self._detect_session_hijacking(src_ip, dst_ip, src_port, dst_port, tcp_flags, payload, timestamp)
+                if hijack_alert:
+                    alerts.append(hijack_alert)
+                    specific_attack_found = True
+            
+            # ========== DATA EXFILTRATION DETECTION (HIGH PRIORITY) ==========
+            if payload_size > 100:
+                exfil_alert = self._detect_data_exfiltration(src_ip, dst_ip, payload_size, timestamp)
+                if exfil_alert:
+                    alerts.append(exfil_alert)
+                    specific_attack_found = True
+            
             # ========== PORT SCAN DETECTION ==========
             if protocol == 'TCP':
                 scan_alert = self._detect_port_scan(src_ip, dst_ip, dst_port, tcp_flags, timestamp)
                 if scan_alert:
                     alerts.append(scan_alert)
-            
-            # ========== FLOOD/DOS DETECTION ==========
-            flood_alert = self._detect_flood(src_ip, dst_ip, protocol, len(str(payload)), timestamp)
-            if flood_alert:
-                alerts.append(flood_alert)
-            
-            # ========== DDOS DETECTION (Distributed) ==========
-            ddos_alert = self._detect_ddos(src_ip, dst_ip, timestamp)
-            if ddos_alert:
-                alerts.append(ddos_alert)
+                    specific_attack_found = True
             
             # ========== DNS TUNNELING DETECTION ==========
             if protocol == 'DNS' or dst_port == 53:
                 dns_alert = self._detect_dns_tunneling(src_ip, payload, timestamp)
                 if dns_alert:
                     alerts.append(dns_alert)
+                    specific_attack_found = True
             
             # ========== ARP SPOOFING DETECTION ==========
             if protocol == 'ARP' or packet.get('arp_op'):
                 arp_alert = self._detect_arp_spoofing(packet)
                 if arp_alert:
                     alerts.append(arp_alert)
+                    specific_attack_found = True
             
             # ========== BRUTE FORCE DETECTION ==========
             if dst_port in [22, 23, 3389, 21, 25, 110, 143, 445, 3306, 5432]:
                 bf_alert = self._detect_brute_force(src_ip, dst_ip, dst_port, timestamp)
                 if bf_alert:
                     alerts.append(bf_alert)
+                    specific_attack_found = True
             
             # ========== APPLICATION LAYER ATTACK DETECTION ==========
             if dst_port in [80, 443, 8080, 8443] or protocol in ['HTTP', 'HTTPS']:
                 app_alerts = self._detect_application_attacks(src_ip, payload, dst_port, timestamp)
-                alerts.extend(app_alerts)
-            
-            # ========== MALFORMED PACKET DETECTION ==========
-            malformed_alert = self._detect_malformed_packets(packet, tcp_flags)
-            if malformed_alert:
-                alerts.append(malformed_alert)
+                if app_alerts:
+                    alerts.extend(app_alerts)
+                    specific_attack_found = True
             
             # ========== COVERT CHANNEL / BEACON DETECTION ==========
             if protocol == 'ICMP' or (protocol == 'TCP' and dst_port in [80, 443]):
                 covert_alert = self._detect_covert_channel(src_ip, dst_ip, protocol, payload, timestamp)
                 if covert_alert:
                     alerts.append(covert_alert)
+                    specific_attack_found = True
+            
+            # ========== MALFORMED PACKET DETECTION ==========
+            malformed_alert = self._detect_malformed_packets(packet, tcp_flags)
+            if malformed_alert:
+                alerts.append(malformed_alert)
+                specific_attack_found = True
             
             # ========== IP SPOOFING DETECTION ==========
             spoof_alert = self._detect_ip_spoofing(src_ip, packet)
             if spoof_alert:
                 alerts.append(spoof_alert)
+                specific_attack_found = True
+            
+            # ========== FLOOD/DOS DETECTION (only if no specific attack found) ==========
+            # This prevents generic flood alerts from overlapping with specific attacks
+            if not specific_attack_found:
+                flood_alert = self._detect_flood(src_ip, dst_ip, protocol, payload_size, timestamp)
+                if flood_alert:
+                    alerts.append(flood_alert)
+                
+                # ========== DDOS DETECTION (Distributed) ==========
+                ddos_alert = self._detect_ddos(src_ip, dst_ip, timestamp)
+                if ddos_alert:
+                    alerts.append(ddos_alert)
             
             # Process and broadcast alerts
             for alert in alerts:
@@ -217,7 +384,6 @@ class NetworkSecurityMonitor:
             
         except Exception as e:
             logger.error(f"Error analyzing packet: {e}")
-            print(f"[ERROR] Error analyzing packet: {e}")
         
         return [a for a in alerts if a is not None]
     
@@ -246,9 +412,10 @@ class NetworkSecurityMonitor:
         # Count unique ports in window
         port_count = len(tracker['ports'])
         
-        # Debug output
-        if port_count >= 3:
-            print(f"[SCAN DETECTION] {src_ip} scanned {port_count} ports, flags: {dict(tracker['flags'])}")
+        # Debug output - show progress toward detection
+        self._debug_log(
+            f"[Security] Scan tracker {src_ip}: {port_count}/{self.thresholds['port_scan_count']} ports, flags={dict(tracker['flags'])}"
+        )
         
         # Detect different scan types
         scan_type = None
@@ -261,7 +428,7 @@ class NetworkSecurityMonitor:
             
         # XMAS Scan (FIN + PSH + URG = 41)
         elif tcp_flags == 41 or (tcp_flags & 41) == 41:
-            if tracker['flags'].get('XMAS', 0) >= 2 or tracker['flags'].get(f'FLAGS-{tcp_flags}', 0) >= 2:
+            if tracker['flags'].get('XMAS', 0) >= 3 or tracker['flags'].get(f'FLAGS-{tcp_flags}', 0) >= 3:
                 scan_type = 'XMAS Scan'
                 severity = 'high'
         
@@ -270,18 +437,18 @@ class NetworkSecurityMonitor:
             scan_type = 'FIN Scan'
             severity = 'high'
             
-        # ACK Scan (just ACK = 16)
-        elif tcp_flags == 16 and tracker['flags']['ACK'] >= self.thresholds['stealth_scan_count']:
+        # ACK Scan (just ACK = 16) - firewall mapping
+        elif tcp_flags == 16 and tracker['flags']['ACK'] >= self.thresholds['stealth_scan_count'] and port_count >= 5:
             scan_type = 'ACK Scan (Firewall Probe)'
             severity = 'medium'
         
-        # SYN Scan (most common)
+        # SYN Scan (most common) - SYN flag is 2
         elif port_count >= self.thresholds['port_scan_count']:
             scan_type = 'SYN Port Scan'
             severity = 'high'
         
         if scan_type:
-            print(f"[ALERT!] {scan_type} detected from {src_ip}!")
+            logger.warning(f"[ALERT] {scan_type} detected from {src_ip}")
             
             # Reset tracker after detection
             self.port_scan_tracker[src_ip] = {'ports': set(), 'timestamps': [], 'flags': defaultdict(int)}
@@ -316,7 +483,7 @@ class NetworkSecurityMonitor:
         
         # Debug output for high rates
         if rate > 10:
-            print(f"[FLOOD DETECTION] {src_ip} -> {dst_ip}: {rate:.1f} pps ({protocol})")
+            self._debug_log(f"[Security] Flood rate {src_ip} -> {dst_ip}: {rate:.1f} pps ({protocol})")
         
         flood_type = None
         severity = 'critical'
@@ -330,7 +497,7 @@ class NetworkSecurityMonitor:
             severity = 'high'
         
         if flood_type:
-            print(f"[ALERT!] {flood_type} detected from {src_ip}!")
+            logger.warning(f"[ALERT] {flood_type} detected from {src_ip}")
             
             return self._create_alert(
                 title=f'{flood_type} Attack Detected',
@@ -366,7 +533,7 @@ class NetworkSecurityMonitor:
         unique_sources = len(tracker['sources'])
         
         if unique_sources >= self.thresholds['ddos_sources']:
-            print(f"[ALERT!] DDoS detected on {dst_ip} from {unique_sources} sources!")
+            logger.warning(f"[ALERT] DDoS detected on {dst_ip} from {unique_sources} sources")
             
             # Reset tracker
             sources_list = list(tracker['sources'])[:10]
@@ -428,7 +595,7 @@ class NetworkSecurityMonitor:
             evidence['high_query_rate'] = len(recent_queries)
         
         if suspicious_score >= 3:
-            print(f"[ALERT!] DNS Tunneling detected from {src_ip}!")
+            logger.warning(f"[ALERT] DNS tunneling detected from {src_ip}")
             
             return self._create_alert(
                 title='DNS Tunneling Detected',
@@ -473,7 +640,7 @@ class NetworkSecurityMonitor:
             old_mac = self.arp_table[arp_src_ip]
             if old_mac != arp_src_mac:
                 self.arp_table[arp_src_ip] = arp_src_mac
-                print(f"[ALERT!] ARP Spoofing detected! {arp_src_ip}: {old_mac} -> {arp_src_mac}")
+                logger.warning(f"[ALERT] ARP spoofing detected: {arp_src_ip}: {old_mac} -> {arp_src_mac}")
                 
                 return self._create_alert(
                     title='ARP Spoofing Detected',
@@ -506,7 +673,7 @@ class NetworkSecurityMonitor:
         
         # Debug output
         if tracker['count'] >= 3:
-            print(f"[BRUTE FORCE] {src_ip} -> {dst_ip}:{dst_port}: {tracker['count']} attempts")
+            self._debug_log(f"[Security] Brute force {src_ip} -> {dst_ip}:{dst_port}: {tracker['count']} attempts")
         
         if tracker['count'] >= self.thresholds['brute_force_attempts']:
             service_map = {
@@ -516,7 +683,7 @@ class NetworkSecurityMonitor:
             }
             service = service_map.get(dst_port, f'Port {dst_port}')
             
-            print(f"[ALERT!] Brute Force on {service} detected from {src_ip}!")
+            logger.warning(f"[ALERT] Brute force on {service} detected from {src_ip}")
             
             # Reset tracker
             attempt_count = tracker['count']
@@ -565,7 +732,7 @@ class NetworkSecurityMonitor:
         
         for pattern in sqli_patterns:
             if re.search(pattern, payload_lower):
-                print(f"[ALERT!] SQL Injection detected from {src_ip}!")
+                logger.warning(f"[ALERT] SQL injection detected from {src_ip}")
                 alerts.append(self._create_alert(
                     title='SQL Injection Attempt',
                     severity='critical',
@@ -587,7 +754,7 @@ class NetworkSecurityMonitor:
         
         for pattern in xss_patterns:
             if re.search(pattern, payload_lower):
-                print(f"[ALERT!] XSS Attack detected from {src_ip}!")
+                logger.warning(f"[ALERT] XSS attack detected from {src_ip}")
                 alerts.append(self._create_alert(
                     title='XSS Attack Attempt',
                     severity='high',
@@ -610,7 +777,7 @@ class NetworkSecurityMonitor:
         
         for pattern in cmd_patterns:
             if re.search(pattern, payload_lower):
-                print(f"[ALERT!] Command Injection detected from {src_ip}!")
+                logger.warning(f"[ALERT] Command injection detected from {src_ip}")
                 alerts.append(self._create_alert(
                     title='Command Injection Attempt',
                     severity='critical',
@@ -631,7 +798,7 @@ class NetworkSecurityMonitor:
         
         for pattern in traversal_patterns:
             if re.search(pattern, payload_lower):
-                print(f"[ALERT!] Path Traversal detected from {src_ip}!")
+                logger.warning(f"[ALERT] Path traversal detected from {src_ip}")
                 alerts.append(self._create_alert(
                     title='Path Traversal Attempt',
                     severity='high',
@@ -675,7 +842,7 @@ class NetworkSecurityMonitor:
         if packet.get('src_ip') == packet.get('dst_ip') and packet.get('src_ip'):
             # Skip localhost
             if not packet.get('src_ip', '').startswith('127.'):
-                print(f"[ALERT!] LAND Attack detected from {packet.get('src_ip')}!")
+                logger.warning(f"[ALERT] LAND attack detected from {packet.get('src_ip')}")
                 return self._create_alert(
                     title='LAND Attack Detected',
                     severity='high',
@@ -715,7 +882,7 @@ class NetworkSecurityMonitor:
                     regularity = std_dev / mean_interval if mean_interval > 0 else 1
                     
                     if regularity < self.thresholds['beacon_regularity'] and mean_interval > 1:
-                        print(f"[ALERT!] C2 Beacon detected: {src_ip} -> {dst_ip}")
+                        logger.warning(f"[ALERT] C2 beacon detected: {src_ip} -> {dst_ip}")
                         self.beacon_tracker[key] = []  # Reset
                         
                         return self._create_alert(
@@ -738,7 +905,7 @@ class NetworkSecurityMonitor:
             
             # Check for unusual ICMP payload
             if len(payload_str) > 64:  # Lowered threshold
-                print(f"[ALERT!] ICMP Covert Channel suspected from {src_ip}")
+                logger.warning(f"[ALERT] ICMP covert channel suspected from {src_ip}")
                 return self._create_alert(
                     title='ICMP Covert Channel Suspected',
                     severity='high',
@@ -779,7 +946,7 @@ class NetworkSecurityMonitor:
             reason = 'Null address as source'
         
         if suspicious:
-            print(f"[ALERT!] IP Spoofing detected: {src_ip}")
+            logger.warning(f"[ALERT] IP spoofing detected: {src_ip}")
             return self._create_alert(
                 title='IP Spoofing Detected',
                 severity='high',
@@ -793,6 +960,156 @@ class NetworkSecurityMonitor:
             )
         
         return None
+    
+    def _detect_session_hijacking(self, src_ip: str, dst_ip: str, src_port: int, 
+                                   dst_port: int, tcp_flags: int, payload: str, 
+                                   timestamp: float) -> Optional[Dict]:
+        """Detect TCP session hijacking attempts - out-of-sequence injection"""
+        
+        # Only interested in packets with data (PSH-ACK typically)
+        if not payload or len(payload) < 10:
+            return None
+            
+        # PSH-ACK flag = 24 (0x18), or just ACK with data
+        has_data = tcp_flags in [24, 16, 25, 17]  # PSH-ACK, ACK, PSH-ACK-FIN, etc.
+        
+        if not has_data:
+            return None
+        
+        session_key = f"{src_ip}:{src_port}-{dst_ip}:{dst_port}"
+        reverse_key = f"{dst_ip}:{dst_port}-{src_ip}:{src_port}"
+        
+        # Track injection attempts - packets with data to non-established sessions
+        # or to common targets (like HTTP) without proper handshake
+        tracker = self.injection_attempts[src_ip]
+        window = self.thresholds['session_injection_window']
+        
+        # Clean old entries
+        tracker['timestamps'] = [t for t in tracker['timestamps'] if timestamp - t < window]
+        
+        # Check if this looks like an injection (data packet without established session)
+        # For simplicity, detect rapid data packets to same destination
+        if session_key not in self.established_sessions and reverse_key not in self.established_sessions:
+            # Check for suspicious patterns in payload
+            suspicious_patterns = [
+                b'hijack',
+                b'GET /admin',
+                b'POST /admin',
+                b'Authorization:',
+                b'Cookie:',
+                b'session',
+                b'token'
+            ]
+            
+            payload_bytes = payload.encode() if isinstance(payload, str) else payload
+            is_suspicious = any(pattern in payload_bytes.lower() if isinstance(payload_bytes, bytes) else pattern.decode() in payload_bytes.lower() 
+                              for pattern in suspicious_patterns)
+            
+            if is_suspicious or len(tracker['timestamps']) > 3:
+                tracker['count'] += 1
+                tracker['timestamps'].append(timestamp)
+                
+                if tracker['count'] >= self.thresholds['session_injection_count']:
+                    logger.warning(f"[ALERT] Session hijacking attempt from {src_ip}")
+                    # Reset counter
+                    self.injection_attempts[src_ip] = {'count': 0, 'timestamps': []}
+                    
+                    return self._create_alert(
+                        title='Session Hijacking Attempt Detected',
+                        severity='critical',
+                        description=f'TCP session injection detected from {src_ip} targeting {dst_ip}:{dst_port}. Suspicious data packets without established session.',
+                        source=src_ip,
+                        attack_type='session_hijack',
+                        evidence={
+                            'target': f'{dst_ip}:{dst_port}',
+                            'injection_count': tracker['count'],
+                            'payload_preview': str(payload)[:100] if payload else ''
+                        }
+                    )
+        
+        return None
+    
+    def _detect_data_exfiltration(self, src_ip: str, dst_ip: str, payload_size: int, 
+                                   timestamp: float) -> Optional[Dict]:
+        """Detect potential data exfiltration - large outbound transfers"""
+        
+        if payload_size < 100:  # Skip small packets
+            return None
+        
+        # Track outbound transfers (assume local IPs are internal)
+        is_outbound = self._is_private_ip(src_ip) and not self._is_private_ip(dst_ip)
+        
+        if not is_outbound:
+            return None
+        
+        tracker = self.outbound_transfers[f"{src_ip}->{dst_ip}"]
+        window = self.thresholds['exfil_window']
+        
+        # Initialize first seen
+        if tracker['first_seen'] == 0:
+            tracker['first_seen'] = timestamp
+        
+        # Clean old entries
+        tracker['timestamps'] = [t for t in tracker['timestamps'] if timestamp - t < window]
+        
+        # Reset if window expired
+        if timestamp - tracker['first_seen'] > window:
+            tracker['bytes'] = 0
+            tracker['first_seen'] = timestamp
+        
+        tracker['bytes'] += payload_size
+        tracker['timestamps'].append(timestamp)
+        
+        # Check threshold
+        if tracker['bytes'] >= self.thresholds['exfil_size_bytes']:
+            logger.warning(f"[ALERT] Data exfiltration detected from {src_ip} to {dst_ip}")
+            
+            transfer_size = tracker['bytes']
+            # Reset tracker
+            self.outbound_transfers[f"{src_ip}->{dst_ip}"] = {'bytes': 0, 'timestamps': [], 'first_seen': 0}
+            
+            return self._create_alert(
+                title='Potential Data Exfiltration Detected',
+                severity='critical',
+                description=f'Large data transfer ({transfer_size / 1024:.1f} KB) from {src_ip} to external IP {dst_ip}',
+                source=src_ip,
+                attack_type='data_exfiltration',
+                evidence={
+                    'destination': dst_ip,
+                    'bytes_transferred': transfer_size,
+                    'duration_seconds': window,
+                    'transfer_rate_kbps': round(transfer_size / 1024 / window, 2)
+                }
+            )
+        
+        return None
+    
+    def _is_private_ip(self, ip: str) -> bool:
+        """Check if IP is private/internal"""
+        if not ip:
+            return False
+        try:
+            parts = ip.split('.')
+            if len(parts) != 4:
+                return False
+            first = int(parts[0])
+            second = int(parts[1])
+            
+            # 10.x.x.x
+            if first == 10:
+                return True
+            # 172.16.x.x - 172.31.x.x
+            if first == 172 and 16 <= second <= 31:
+                return True
+            # 192.168.x.x
+            if first == 192 and second == 168:
+                return True
+            # Loopback
+            if first == 127:
+                return True
+            return False
+        except:
+            return False
     
     # ========== HELPER METHODS ==========
     
@@ -864,13 +1181,7 @@ class NetworkSecurityMonitor:
             'count': self.alert_counts[attack_type]
         }
         
-        print(f"\n{'='*60}")
-        print(f"🚨 SECURITY ALERT: {title}")
-        print(f"   Severity: {severity.upper()}")
-        print(f"   Source: {source}")
-        print(f"   Description: {description}")
-        print(f"   Alert #{self.alert_counts[attack_type]} of type '{attack_type}'")
-        print(f"{'='*60}\n")
+        logger.info(f"[Security] Alert created: {title} ({severity}) from {source}")
         
         return alert
     
@@ -884,7 +1195,7 @@ class NetworkSecurityMonitor:
                 self.attack_logs = self.attack_logs[-500:]
             
             # Log to logger
-            logger.warning(f"🚨 [{alert['severity'].upper()}] {alert['title']}: {alert['description']}")
+            logger.warning(f"[ALERT] [{alert['severity'].upper()}] {alert['title']}: {alert['description']}")
             
             # Call callback if set
             if self.alert_callback:
@@ -892,7 +1203,7 @@ class NetworkSecurityMonitor:
                     self.alert_callback(alert)
                 except Exception as e:
                     logger.error(f"Error in alert callback: {e}")
-                    print(f"[ERROR] Alert callback failed: {e}")
+                    logger.error(f"[Security] Alert callback failed: {e}")
     
     def _update_stats(self, packet: Dict):
         """Update packet statistics"""
@@ -940,5 +1251,5 @@ class NetworkSecurityMonitor:
         self.beacon_tracker.clear()
         self.failed_logins.clear()
         self.alert_history.clear()
-        logger.info("🧹 All tracking data cleared")
-        print("🧹 All tracking data cleared")
+        logger.info("[Clear] All tracking data cleared")
+        logger.info("[Clear] All tracking data cleared")

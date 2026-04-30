@@ -3,6 +3,9 @@ REM Quick Start Script for Packet Peeper Backend (Windows)
 REM Run this script to set up and start the backend
 
 setlocal enabledelayedexpansion
+set "ROOT_DIR=%~dp0"
+set "BACKEND_DIR=%ROOT_DIR%backend"
+set "VENV_DIR=%ROOT_DIR%.venv"
 
 echo.
 echo ╔════════════════════════════════════════════════════════════╗
@@ -23,9 +26,9 @@ echo. [✓] Python %PYTHON_VERSION% found
 echo.
 
 REM Step 2: Create virtual environment (if needed)
-if not exist "venv" (
+if not exist "%VENV_DIR%" (
     echo [2/5] Creating virtual environment...
-    python -m venv venv
+    python -m venv "%VENV_DIR%"
     echo. [✓] Virtual environment created
 ) else (
     echo [2/5] Virtual environment already exists
@@ -35,19 +38,20 @@ echo.
 
 REM Step 3: Activate virtual environment and install dependencies
 echo [3/5] Installing dependencies...
-call venv\Scripts\activate.bat
+call "%VENV_DIR%\Scripts\activate.bat"
 python -m pip install --upgrade pip -q >nul 2>&1
-pip install -r backend\requirements.txt -q
+pip install -r "%BACKEND_DIR%\requirements.txt" -q
 echo. [✓] Dependencies installed
 echo.
 
 REM Step 4: Run verification
 echo [4/5] Verifying installation...
-cd backend
+pushd "%BACKEND_DIR%"
 python verify_backend.py
 if errorlevel 1 (
     echo. [×] Verification failed!
     echo Please fix the issues above and try again.
+    popd
     pause
     exit /b 1
 )
@@ -61,7 +65,7 @@ echo.
 set /p INTERFACE="Enter interface name (e.g., Wi-Fi): "
 
 if "!INTERFACE!"=="" (
-    set INTERFACE=Wi-Fi
+    set INTERFACE=auto
     echo. [⚠] No interface specified, using default: !INTERFACE!
 )
 
@@ -73,7 +77,7 @@ echo.
 echo Starting Packet Peeper backend...
 echo. [→] Interface: !INTERFACE!
 echo. [→] Backend: http://localhost:5000
-echo. [→] Logs: logs\packet_peeper.log
+echo. [→] Logs: backend\logs\packet_peeper.log
 echo.
 echo To stop the server, press Ctrl+C
 echo.
@@ -81,5 +85,5 @@ echo.
 REM Start the backend
 python app.py "!INTERFACE!"
 
-cd ..
+popd
 pause

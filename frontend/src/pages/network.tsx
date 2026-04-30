@@ -61,9 +61,11 @@ export default function NetworkMap() {
     setTimeout(() => setIsScanning(false), 5000);
   };
   
-  // Use real devices if available, otherwise show demo data
+  // Use real devices only - no demo data
   const displayDevices: DeviceNode[] = useMemo(() => {
-    const baseDevices = devices.length > 0 ? devices.map((d, i) => ({
+    if (devices.length === 0) return [];
+    
+    const baseDevices = devices.map((d, i) => ({
       id: i,
       name: d.hostname || `Device ${i + 1}`,
       location: d.ip_address,
@@ -71,16 +73,7 @@ export default function NetworkMap() {
       status: 'online' as const,
       mac: d.mac_address,
       packets: (d.packets_in || 0) + (d.packets_out || 0)
-    })) : [
-      { id: 1, name: "Home Router", location: "192.168.1.1", type: "router", status: "online" as const, mac: "00:11:22:33:44:55", packets: 1250 },
-      { id: 2, name: "MacBook Pro", location: "192.168.1.100", type: "pc", status: "online" as const, mac: "AA:BB:CC:DD:EE:FF", packets: 3420 },
-      { id: 3, name: "Smart TV", location: "192.168.1.105", type: "tv", status: "online" as const, mac: "11:22:33:44:55:66", packets: 890 },
-      { id: 4, name: "iPhone 15", location: "192.168.1.110", type: "mobile", status: "online" as const, mac: "22:33:44:55:66:77", packets: 2100 },
-      { id: 5, name: "iPad Pro", location: "192.168.1.115", type: "tablet", status: "offline" as const, mac: "33:44:55:66:77:88", packets: 0 },
-      { id: 6, name: "Smart Fridge", location: "192.168.1.120", type: "iot", status: "warning" as const, mac: "44:55:66:77:88:99", packets: 45 },
-      { id: 7, name: "Security Cam", location: "192.168.1.125", type: "iot", status: "online" as const, mac: "55:66:77:88:99:AA", packets: 5600 },
-      { id: 8, name: "Gaming PC", location: "192.168.1.130", type: "pc", status: "online" as const, mac: "66:77:88:99:AA:BB", packets: 8900 },
-    ];
+    }));
     
     // Calculate positions for star topology (excluding router which is center)
     const nonRouterDevices = baseDevices.filter(d => d.type !== 'router');
@@ -186,6 +179,32 @@ export default function NetworkMap() {
               {/* Star Topology Visualization */}
               <Card className="bg-card/40 border-border/50 rounded-2xl overflow-hidden">
                 <CardContent className="p-0">
+                  {displayDevices.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-[600px] text-center">
+                      <Wifi size={64} className="text-muted-foreground/30 mb-4" />
+                      <h3 className="text-xl font-semibold text-muted-foreground mb-2">No Devices Detected</h3>
+                      <p className="text-sm text-muted-foreground/70 max-w-md mb-6">
+                        Start packet capture to detect devices on your local network.
+                      </p>
+                      <Button
+                        onClick={handleScanNetwork}
+                        disabled={isScanning}
+                        className="gap-2"
+                      >
+                        {isScanning ? (
+                          <>
+                            <Loader2 size={16} className="animate-spin" />
+                            Scanning...
+                          </>
+                        ) : (
+                          <>
+                            <Wifi size={16} />
+                            Scan Network
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  ) : (
                   <div className="relative w-full h-[600px] flex items-center justify-center overflow-hidden">
                     {/* Background Grid */}
                     <div className="absolute inset-0 opacity-10">
@@ -422,6 +441,7 @@ export default function NetworkMap() {
                       </div>
                     </motion.div>
                   </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -434,6 +454,34 @@ export default function NetworkMap() {
               transition={{ duration: 0.3 }}
             >
               {/* Grid View */}
+              {displayDevices.length === 0 ? (
+                <Card className="bg-card/40 border-border/50 rounded-2xl">
+                  <CardContent className="flex flex-col items-center justify-center py-20 text-center">
+                    <Wifi size={64} className="text-muted-foreground/30 mb-4" />
+                    <h3 className="text-xl font-semibold text-muted-foreground mb-2">No Devices Detected</h3>
+                    <p className="text-sm text-muted-foreground/70 max-w-md mb-6">
+                      Start packet capture to detect devices on your local network.
+                    </p>
+                    <Button
+                      onClick={handleScanNetwork}
+                      disabled={isScanning}
+                      className="gap-2"
+                    >
+                      {isScanning ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Scanning...
+                        </>
+                      ) : (
+                        <>
+                          <Wifi size={16} />
+                          Scan Network
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {displayDevices.map((device, index) => {
                   const Icon = iconMap[device.type] || iconMap.default;
@@ -518,6 +566,7 @@ export default function NetworkMap() {
                   </Card>
                 </motion.div>
               </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

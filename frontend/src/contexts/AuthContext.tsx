@@ -1,0 +1,136 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { apiService, ApiError } from "@/services/apiService";
+import { socketService } from "@/services/socketService";
+import { useMonitorStore } from "@/store/monitorStore";
+
+interface AuthUser {
+  username: string;
+}
+
+interface AuthContextValue {
+  authEnabled: boolean;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  user: AuthUser | null;
+  error: string | null;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshStatus: () => Promise<void>;
+  clearError: () => void;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+interface AuthProviderProps {
+  children: React.ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshStatus = useCallback(async () => {
+    setIsLoading(true);
+
+    try {
+      const status = await apiService.getAuthStatus();
+      const enabled = Boolean(status.auth_enabled);
+      const authenticated = enabled ? Boolean(status.authenticated) : true;
+
+      setAuthEnabled(enabled);
+      setIsAuthenticated(authenticated);
+      setUser(status.user ?? (enabled ? null : { username: "operator" }));
+      setError(null);
+
+      if (enabled && !authenticated) {
+        apiService.setAuthToken(null);
+      }
+    } catch {
+      // If status endpoint is unavailable, do not block app usage.
+      setAuthEnabled(false);
+      setIsAuthenticated(true);
+      setUser({ username: "operator" });
+      setError(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [refreshStatus]);
+
+  const login = useCallback(async (username: string, password: string) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const result = await apiService.login(username, password);
+      setAuthEnabled(Boolean(result.auth_enabled));
+      setIsAuthenticated(true);
+      setUser(result.user ?? { username });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Login failed. Please try again.";
+      setError(message);
+      setIsAuthenticated(false);
+      setUser(null);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    setIsLoading(true);
+
+    try {
+      await apiService.logout();
+    } catch {
+      // Ignore network failures and clear client state anyway.
+    }
+
+    socketService.disconnect();
+    useMonitorStore.getState().reset();
+
+    if (authEnabled) {
+      setIsAuthenticated(false);
+      setUser(null);
+    } else {
+      setIsAuthenticated(true);
+      setUser({ username: "operator" });
+    }
+
+    setError(null);
+    setIsLoading(false);
+  }, [authEnabled]);
+
+  const clearError = useCallback(() => setError(null), []);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      authEnabled,
+      isAuthenticated,
+      isLoading,
+      user,
+      error,
+      login,
+      logout,
+      refreshStatus,
+      clearError,
+    }),
+    [authEnabled, isAuthenticated, isLoading, user, error, login, logout, refreshStatus, clearError]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
+  return context;
+}

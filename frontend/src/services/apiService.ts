@@ -4,12 +4,62 @@
  */
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const AUTH_TOKEN_KEY = 'packet_peeper_auth_token';
+
+export class ApiError extends Error {
+  status?: number;
+  code?: string;
+
+  constructor(message: string, status?: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
 
 class ApiService {
   private baseUrl: string;
+  private authToken: string | null;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
+    this.authToken = this.loadStoredToken();
+  }
+
+  private loadStoredToken(): string | null {
+    try {
+      return localStorage.getItem(AUTH_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+    try {
+      if (token) {
+        localStorage.setItem(AUTH_TOKEN_KEY, token);
+      } else {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+      }
+    } catch {
+      // Ignore persistence issues in restricted environments.
+    }
+  }
+
+  getAuthToken(): string | null {
+    return this.authToken;
+  }
+
+  private getAuthHeaders(): HeadersInit {
+    if (!this.authToken) {
+      return {};
+    }
+
+    return {
+      Authorization: `Bearer ${this.authToken}`,
+    };
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}, timeout: number = 10000): Promise<T> {
@@ -17,6 +67,7 @@ class ApiService {
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
+      ...this.getAuthHeaders(),
     };
 
     // Create abort controller for timeout
@@ -36,7 +87,29 @@ class ApiService {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        let errorCode: string | undefined;
+
+        try {
+          const payload = await response.json();
+          if (payload?.error) {
+            errorMessage = payload.error;
+          }
+          if (payload?.code) {
+            errorCode = payload.code;
+          }
+        } catch {
+          const fallbackText = await response.text().catch(() => '');
+          if (fallbackText) {
+            errorMessage = fallbackText;
+          }
+        }
+
+        throw new ApiError(errorMessage, response.status, errorCode);
+      }
+
+      if (response.status === 204) {
+        return undefined as T;
       }
 
       return response.json();
@@ -49,6 +122,77 @@ class ApiService {
       console.error(`API Error [${endpoint}]:`, error);
       throw error;
     }
+  }
+
+  private async requestBlob(endpoint: string, options: RequestInit = {}, timeout: number = 20000): Promise<Blob> {
+    const url = `${this.baseUrl}${endpoint}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...this.getAuthHeaders(),
+          ...options.headers,
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new ApiError(`Request failed with status ${response.status}`, response.status);
+      }
+
+      return response.blob();
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new ApiError('Request timed out', 408);
+      }
+      throw error;
+    }
+  }
+
+  // ==================== Authentication ====================
+
+  async login(username: string, password: string) {
+    const result = await this.request<{
+      message: string;
+      token: string;
+      expires_in: number;
+      user: { username: string };
+      auth_enabled: boolean;
+    }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (result?.token) {
+      this.setAuthToken(result.token);
+    }
+
+    return result;
+  }
+
+  async logout() {
+    try {
+      await this.request<{ message: string }>('/api/auth/logout', { method: 'POST' });
+    } finally {
+      this.setAuthToken(null);
+    }
+  }
+
+  async getAuthStatus() {
+    return this.request<{
+      auth_enabled: boolean;
+      authenticated: boolean;
+      user?: { username: string };
+      expires_in?: number | null;
+      error?: string;
+    }>('/api/auth/status');
   }
 
   // ==================== Packets ====================
@@ -112,7 +256,7 @@ class ApiService {
       '/api/sniffing/start',
       { 
         method: 'POST',
-        body: JSON.stringify({ interface: interfaceName || 'Wi-Fi' })
+        body: JSON.stringify({ interface: interfaceName || 'auto' })
       }
     );
   }
@@ -132,17 +276,11 @@ class ApiService {
   // ==================== Reports ====================
 
   async generateReport(type: 'pdf' | 'csv' | 'json' = 'json') {
-    const response = await fetch(`${this.baseUrl}/api/reports`, {
+    return this.requestBlob('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type }),
     });
-    
-    if (!response.ok) {
-      throw new Error(`Report generation failed: ${response.status}`);
-    }
-    
-    return response.blob();
   }
 
   async downloadReport(type: 'pdf' | 'csv' | 'json' = 'json') {
@@ -251,7 +389,33 @@ class ApiService {
       model?: string;
       available: boolean;
       cache_size?: number;
+      is_fallback?: boolean;
+      confidence?: string;
+      message?: string;
+      providers_available?: Record<string, boolean>;
     }>('/api/ai/status');
+  }
+
+  // ==================== Detection Profile ====================
+
+  async getDetectionProfile() {
+    return this.request<{
+      current_profile: string;
+      available_profiles: string[];
+      current_thresholds?: Record<string, any>;
+      description?: Record<string, string>;
+    }>('/api/detection/profile');
+  }
+
+  async setDetectionProfile(profile: string) {
+    return this.request<{
+      message: string;
+      current_profile: string;
+      current_thresholds?: Record<string, any>;
+    }>('/api/detection/profile', {
+      method: 'POST',
+      body: JSON.stringify({ profile })
+    });
   }
 }
 

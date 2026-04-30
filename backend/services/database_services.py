@@ -164,11 +164,11 @@ class DatabaseService:
             
             # Create all tables
             Base.metadata.create_all(self.engine)
-            logger.info(f"✅ Database initialized: {DB_ENGINE}")
+            logger.info(f"[OK] Database initialized: {DB_ENGINE}")
             
         except Exception as e:
-            logger.error(f"❌ Database initialization failed: {str(e)}")
-            logger.warning("⚠️  Falling back to in-memory storage")
+            logger.error(f"[ERROR] Database initialization failed: {str(e)}")
+            logger.warning("[WARN] Falling back to in-memory storage")
             self.engine = None
             self.SessionLocal = None
     
@@ -320,6 +320,21 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error retrieving alerts: {str(e)}")
             return []
+    
+    def clear_alerts(self) -> bool:
+        """Delete all alerts from database"""
+        if not self.SessionLocal:
+            return False
+        
+        try:
+            with self.get_session() as session:
+                session.query(AlertRecord).delete()
+                session.commit()
+                logger.info("All alerts cleared from database")
+                return True
+        except Exception as e:
+            logger.error(f"Error clearing alerts from database: {str(e)}")
+            return False
     
     # ============== DEVICE OPERATIONS ==============
     

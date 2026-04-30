@@ -75,39 +75,12 @@ export default function Analytics() {
                       </div>
                     </motion.div>
                   )}) : (
-                    <>
-                      {[
-                        { name: "Living Room TV", usage: "120 GB", trend: "+5%", icon: "📺" },
-                        { name: "Alex's MacBook", usage: "85 GB", trend: "-2%", icon: "💻" },
-                        { name: "Kitchen Hub", usage: "12 GB", trend: "Stable", icon: "🍳" }
-                      ].map((item, i) => (
-                        <motion.div 
-                          key={item.name} 
-                          className="flex items-center justify-between group cursor-pointer p-3 rounded-xl hover:bg-muted/30 transition-all"
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: 0.2 + i * 0.1 }}
-                          whileHover={{ x: 5 }}
-                        >
-                          <div className="flex items-center gap-4">
-                            <motion.span 
-                              className="text-2xl"
-                              whileHover={{ scale: 1.2, rotate: 10 }}
-                            >
-                              {item.icon}
-                            </motion.span>
-                            <div>
-                              <p className="font-bold text-foreground group-hover:text-primary transition-colors">{item.name}</p>
-                              <p className="text-xs text-muted-foreground">Total usage this month</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-foreground">{item.usage}</p>
-                            <p className={`text-[10px] font-bold ${item.trend.startsWith('+') ? 'text-orange-400' : 'text-emerald-400'}`}>{item.trend}</p>
-                          </div>
-                        </motion.div>
-                      ))}
-                    </>
+                    <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center">
+                      <p className="text-sm font-semibold text-foreground">No device traffic yet</p>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Start packet capture to see top data users in real time.
+                      </p>
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -140,7 +113,7 @@ export default function Analytics() {
                     </div>
                     <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
                       <motion.div 
-                        className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400"
+                        className="h-full bg-linear-to-r from-emerald-500 to-emerald-400"
                         initial={{ width: 0 }}
                         animate={{ width: '100%' }}
                         transition={{ duration: 1, delay: 0.5 }}

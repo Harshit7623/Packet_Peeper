@@ -19,49 +19,23 @@ export default function PacketMonitor() {
 
   // Use real packets from store when available
   useEffect(() => {
-    if (packets.length > 0) {
-      setLocalPackets(packets.map((p, i) => ({
-        id: p.id || i,
-        timestamp: p.timestamp,
-        source: p.src_ip,
-        destination: p.dst_ip,
-        protocol: p.protocol,
-        port: p.dst_port,
-        service: p.service || 'Unknown',
-        size: p.length,
-        status: 'Safe'
-      })));
+    if (packets.length === 0) {
+      setLocalPackets([]);
+      return;
     }
+
+    setLocalPackets(packets.map((p, i) => ({
+      id: p.id || i,
+      timestamp: p.timestamp,
+      source: p.src_ip,
+      destination: p.dst_ip,
+      protocol: p.protocol,
+      port: p.dst_port,
+      service: p.service || 'Unknown',
+      size: p.length,
+      status: 'Safe'
+    })));
   }, [packets]);
-
-  // Demo mode with generated packets when no real data AND sniffing is active
-  useEffect(() => {
-    if (!isSniffing || packets.length > 0) return;
-    
-    const protocols = ["TCP", "UDP", "ICMP", "HTTP", "HTTPS", "DNS", "SSH"];
-    const services = ["Netflix", "WhatsApp", "YouTube", "Unknown", "SSH", "DNS", "Cloudflare", "AWS"];
-    
-    const generatePacket = (id: number) => ({
-      id,
-      timestamp: new Date().toISOString(),
-      source: `192.168.1.${Math.floor(Math.random() * 255)}`,
-      destination: `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
-      protocol: protocols[Math.floor(Math.random() * protocols.length)],
-      port: Math.floor(Math.random() * 65535),
-      service: services[Math.floor(Math.random() * services.length)],
-      size: Math.floor(Math.random() * 1500),
-      status: Math.random() > 0.95 ? "Suspicious" : "Safe",
-    });
-    
-    const interval = setInterval(() => {
-      setLocalPackets(prev => {
-        const newPacket = generatePacket(Date.now());
-        return [newPacket, ...prev].slice(0, 50);
-      });
-    }, 600);
-
-    return () => clearInterval(interval);
-  }, [isSniffing, packets.length]);
 
   const filteredPackets = localPackets.filter(p => 
     p.source?.includes(searchTerm) || 
@@ -75,8 +49,8 @@ export default function PacketMonitor() {
         socketService.stopSniffing();
         setSniffing(false, null);
       } else {
-        socketService.startSniffing('Wi-Fi');
-        setSniffing(true, 'Wi-Fi');
+        socketService.startSniffing('auto');
+        setSniffing(true, 'auto');
       }
     } catch (err) {
       console.error('Failed to toggle capture:', err);
@@ -284,7 +258,19 @@ export default function PacketMonitor() {
                     >
                       <Eye className="text-primary" size={32} />
                     </motion.div>
-                    <p className="text-muted-foreground font-mono text-xs uppercase tracking-widest">Awaiting Traffic Ingress...</p>
+                    <p className="text-muted-foreground font-mono text-xs uppercase tracking-widest">
+                      {isSniffing ? "Awaiting Traffic Ingress..." : "Capture Paused"}
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-3">
+                      {isSniffing
+                        ? "No packets captured yet. Ensure the correct interface is selected."
+                        : "Start packet capture to see live traffic."}
+                    </p>
+                    {!isSniffing && (
+                      <Button className="mt-6 rounded-full px-6" onClick={handleToggleCapture}>
+                        <Play size={16} className="mr-2" /> Start Capture
+                      </Button>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>

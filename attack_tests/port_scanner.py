@@ -228,7 +228,7 @@ class PortScanner:
 
 def main():
     parser = argparse.ArgumentParser(description="Port Scanner for Detection Testing")
-    parser.add_argument("--target", "-t", default="127.0.0.1", help="Target IP address")
+    parser.add_argument("--target", "-t", default=None, help="Target IP address (NOT 127.0.0.1! Use router IP)")
     parser.add_argument("--type", "-T", default="syn", 
                         choices=["syn", "fin", "xmas", "null", "ack", "udp", "aggressive", "all"],
                         help="Scan type")
@@ -236,6 +236,21 @@ def main():
     parser.add_argument("--delay", "-d", type=float, default=0.01, help="Delay between packets")
     
     args = parser.parse_args()
+    
+    # Check target
+    if args.target is None:
+        print("\n" + "=" * 60)
+        print("  ⚠️  ERROR: You must specify a target!")
+        print("  DO NOT use 127.0.0.1 - loopback traffic won't be captured!")
+        print("  Use: python port_scanner.py --target 192.168.1.1")
+        print("=" * 60)
+        return
+    
+    if args.target in ["127.0.0.1", "localhost"]:
+        print("\n⚠️  WARNING: 127.0.0.1 won't be captured by PacketPeeper!")
+        print("Use your router IP instead (check: ipconfig | findstr Gateway)")
+        if input("Continue anyway? (y/N): ").lower() != 'y':
+            return
     
     # Parse port range
     if "-" in args.ports:

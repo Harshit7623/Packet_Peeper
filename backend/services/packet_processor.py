@@ -36,17 +36,17 @@ class PacketProcessor:
         self.error_count = 0
         self.processed_count = 0
         
-        logger.info(f"🔄 PacketProcessor initialized with {num_workers} workers, queue size {queue_size}")
+        logger.info(f"[Processor] PacketProcessor initialized with {num_workers} workers, queue size {queue_size}")
     
     def register_callback(self, callback: Callable[[Dict], None]) -> None:
         """Register a callback to be called for each processed packet"""
         self.callbacks.append(callback)
-        logger.info(f"📌 Registered callback: {callback.__name__}")
+        logger.info(f"[Callback] Registered callback: {callback.__name__}")
     
     def start(self) -> None:
         """Start worker threads"""
         if self.running:
-            logger.warning("⚠️  Processor already running")
+            logger.warning("[WARN] Processor already running")
             return
         
         self.running = True
@@ -62,7 +62,7 @@ class PacketProcessor:
             worker.start()
             self.workers.append(worker)
         
-        logger.info(f"✅ Started {self.num_workers} worker threads")
+        logger.info(f"[OK] Started {self.num_workers} worker threads")
     
     def stop(self) -> None:
         """Stop all worker threads gracefully"""
@@ -80,7 +80,7 @@ class PacketProcessor:
             worker.join(timeout=5)
         
         self.workers.clear()
-        logger.info(f"⛔ Processor stopped. Processed: {self.processed_count}, Errors: {self.error_count}")
+        logger.info(f"[Processor] Stopped. Processed: {self.processed_count}, Errors: {self.error_count}")
     
     def put_packet(self, packet_info: Dict) -> bool:
         """
@@ -99,7 +99,7 @@ class PacketProcessor:
             self.queue.put(packet_info, block=False)
             return True
         except queue.Full:
-            logger.debug("📤 Packet queue full, dropping packet")
+            logger.debug("[Queue] Packet queue full, dropping packet")
             self.error_count += 1
             return False
     
@@ -110,7 +110,7 @@ class PacketProcessor:
         Args:
             worker_id: Worker thread identifier
         """
-        logger.info(f"👷 Worker {worker_id} started")
+        logger.info(f"[Worker] Worker {worker_id} started")
         
         while self.running:
             try:
@@ -129,10 +129,10 @@ class PacketProcessor:
                 # Timeout; continue to check self.running
                 continue
             except Exception as e:
-                logger.error(f"👷 Worker {worker_id} error: {str(e)}")
+                logger.error(f"[Worker] Worker {worker_id} error: {str(e)}")
                 self.error_count += 1
         
-        logger.info(f"👷 Worker {worker_id} stopped")
+        logger.info(f"[Worker] Worker {worker_id} stopped")
     
     def _process_packet(self, packet_info: Dict, worker_id: int) -> None:
         """
@@ -152,10 +152,10 @@ class PacketProcessor:
                 try:
                     callback(packet_info)
                 except Exception as e:
-                    logger.error(f"📌 Callback {callback.__name__} failed: {str(e)}")
+                    logger.error(f"[Callback] {callback.__name__} failed: {str(e)}")
         
         except Exception as e:
-            logger.error(f"👷 Worker {worker_id} processing error: {str(e)}")
+            logger.error(f"[Worker] Worker {worker_id} processing error: {str(e)}")
             self.error_count += 1
     
     def get_stats(self) -> Dict:

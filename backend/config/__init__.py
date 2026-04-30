@@ -54,4 +54,4 @@ __all__ = [
 # Validate on import
 if not validate_config():
     import warnings
-    warnings.warn("⚠️  Configuration validation found issues. Check logs.", UserWarning)
+    warnings.warn("[WARN] Configuration validation found issues. Check logs.", UserWarning)

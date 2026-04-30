@@ -64,8 +64,8 @@ npm run build:linux
 
 ```bash
 # Terminal 1: Start the backend
-cd ..
-python app.py Wi-Fi
+cd ../..
+python backend/app.py auto
 
 # Terminal 2: Start the frontend dev server
 cd frontend

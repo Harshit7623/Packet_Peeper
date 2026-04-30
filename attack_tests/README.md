@@ -5,6 +5,23 @@
 **Only use on networks you own or have explicit permission to test.**
 **Unauthorized use is ILLEGAL and may result in criminal prosecution.**
 
+## ⚠️ IMPORTANT: Target Selection
+**DO NOT use 127.0.0.1 (localhost)!** Loopback traffic doesn't go through your network interface and won't be captured by PacketPeeper.
+
+### Correct Targets:
+- **Your router:** `192.168.1.1` (or your gateway IP)
+- **Another device on your LAN:** Your phone's IP, another computer, etc.
+- **Your own machine's LAN IP:** e.g., `192.168.1.100` (NOT 127.0.0.1)
+
+To find your gateway IP:
+```powershell
+# Windows
+ipconfig | findstr "Default Gateway"
+
+# Linux/Mac
+ip route | grep default
+```
+
 ## Overview
 This toolkit simulates various network attacks to test your PacketPeeper detection capabilities.
 
@@ -45,13 +62,16 @@ pip install scapy requests
 
 ## Usage
 ```bash
-# Run all tests
-python run_all_attacks.py --target 127.0.0.1
+# IMPORTANT: Replace with your router/gateway IP or another device on your LAN!
+# DO NOT use 127.0.0.1 - loopback traffic is not captured!
 
-# Run specific attack
-python port_scanner.py --target 127.0.0.1 --type syn
-python dos_attacks.py --target 127.0.0.1 --type synflood --duration 10
-python spoofing_attacks.py --target 127.0.0.1 --type arp
+# Run all tests against your router
+python run_all_attacks.py --target 192.168.1.1
+
+# Run specific attack against your router
+python port_scanner.py --target 192.168.1.1 --type syn
+python dos_attacks.py --target 192.168.1.1 --type synflood --duration 10
+python application_attacks.py --target 192.168.1.1 --type all
 ```
 
 ## Detection Expected

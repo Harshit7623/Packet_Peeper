@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 
 export default function TrafficAnalysis() {
-  const { stats, packets, alerts, devices } = useMonitorStore();
+  const { stats, packets, alerts, devices, setStats, setDevices, setAlerts } = useMonitorStore();
   const [timeRange, setTimeRange] = useState('7d');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -40,7 +40,27 @@ export default function TrafficAnalysis() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 1000);
+    try {
+      const [statsResult, devicesResult, alertsResult] = await Promise.allSettled([
+        apiService.getStats(),
+        apiService.getDevices(),
+        apiService.getAlerts(),
+      ]);
+
+      if (statsResult.status === 'fulfilled') {
+        setStats(statsResult.value);
+      }
+      if (devicesResult.status === 'fulfilled') {
+        setDevices(devicesResult.value);
+      }
+      if (alertsResult.status === 'fulfilled') {
+        setAlerts(alertsResult.value);
+      }
+    } catch (err) {
+      console.error('Refresh failed:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleExport = async () => {
@@ -54,16 +74,65 @@ export default function TrafficAnalysis() {
     }
   };
 
-  // Generate realistic traffic timeline based on actual data
   const trafficTimeline = useMemo(() => {
-    const hours = ['12AM', '3AM', '6AM', '9AM', '12PM', '3PM', '6PM', '9PM'];
-    const baseValue = Math.max(10, Math.floor(totalPackets / 8));
-    return hours.map((hour, i) => ({
-      time: hour,
-      inbound: Math.floor(baseValue * (0.5 + Math.sin(i * 0.5) * 0.3 + Math.random() * 0.2)),
-      outbound: Math.floor(baseValue * (0.4 + Math.cos(i * 0.5) * 0.3 + Math.random() * 0.2)),
-    }));
-  }, [totalPackets]);
+    if (packets.length === 0) return [];
+
+    const now = Date.now();
+    const rangeMs = timeRange === '24h'
+      ? 24 * 60 * 60 * 1000
+      : timeRange === '7d'
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000;
+    const bucketCount = 8;
+    const bucketSize = rangeMs / bucketCount;
+    const startTime = now - rangeMs;
+    const deviceIps = new Set(devices.map((device) => device.ip_address).filter(Boolean));
+    const hasDeviceMap = deviceIps.size > 0;
+
+    const buckets = Array.from({ length: bucketCount }, (_, index) => {
+      const bucketStart = new Date(startTime + index * bucketSize);
+      const label = timeRange === '24h'
+        ? bucketStart.toLocaleTimeString([], { hour: '2-digit' })
+        : bucketStart.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+      return {
+        time: label,
+        inbound: 0,
+        outbound: 0,
+      };
+    });
+
+    packets.forEach((packet) => {
+      const timestamp = new Date(packet.timestamp).getTime();
+      if (!Number.isFinite(timestamp)) return;
+      if (timestamp < startTime || timestamp > now) return;
+
+      const bucketIndex = Math.min(
+        bucketCount - 1,
+        Math.max(0, Math.floor((timestamp - startTime) / bucketSize))
+      );
+
+      if (!hasDeviceMap) {
+        buckets[bucketIndex].inbound += 1;
+        return;
+      }
+
+      const srcIp = packet.src_ip;
+      const dstIp = packet.dst_ip;
+      const srcLocal = srcIp && deviceIps.has(srcIp);
+      const dstLocal = dstIp && deviceIps.has(dstIp);
+
+      if (srcLocal && !dstLocal) {
+        buckets[bucketIndex].outbound += 1;
+      } else if (dstLocal && !srcLocal) {
+        buckets[bucketIndex].inbound += 1;
+      } else if (srcLocal || dstLocal) {
+        buckets[bucketIndex].inbound += 1;
+      }
+    });
+
+    return buckets;
+  }, [devices, packets, timeRange]);
 
   // Protocol distribution with real data
   const protocolData = useMemo(() => {
@@ -77,21 +146,19 @@ export default function TrafficAnalysis() {
 
   // Application layer breakdown
   const appLayerData = useMemo(() => {
-    const data = [];
+    const data = [] as Array<{ name: string; value: number; color: string }>;
     if (httpPackets > 0) data.push({ name: 'HTTP', value: httpPackets, color: '#f59e0b' });
     if (httpsPackets > 0) data.push({ name: 'HTTPS', value: httpsPackets, color: '#22c55e' });
     if (dnsPackets > 0) data.push({ name: 'DNS', value: dnsPackets, color: '#8b5cf6' });
     const other = totalPackets - httpPackets - httpsPackets - dnsPackets;
     if (other > 0) data.push({ name: 'Other', value: other, color: '#64748b' });
-    return data.length > 0 ? data : [{ name: 'Waiting for data...', value: 1, color: '#64748b' }];
+    return data;
   }, [httpPackets, httpsPackets, dnsPackets, totalPackets]);
 
   // Top connections (based on packets)
   const topConnections = useMemo(() => {
     if (devices.length === 0) {
-      return [
-        { ip: 'Waiting for data...', packets: 0, type: 'scanning' },
-      ];
+      return [];
     }
     return devices.slice(0, 5).map(d => ({
       ip: d.hostname || d.ip_address,
@@ -249,29 +316,37 @@ export default function TrafficAnalysis() {
                   <span className="flex items-center gap-1"><ArrowUp className="w-3 h-3 text-orange-400" /> Outbound</span>
                 </div>
               </CardHeader>
-              <CardContent className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trafficTimeline}>
-                    <defs>
-                      <linearGradient id="colorInbound" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#00d4ff" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorOutbound" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#ff6b35" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#ff6b35" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))', fontSize: 11}} />
-                    <YAxis hide />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px' }}
-                      formatter={(value: number) => [value.toLocaleString() + ' packets', '']}
-                    />
-                    <Area type="monotone" dataKey="inbound" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
-                    <Area type="monotone" dataKey="outbound" stroke="#ff6b35" strokeWidth={2} fillOpacity={1} fill="url(#colorOutbound)" />
-                  </AreaChart>
-                </ResponsiveContainer>
+              <CardContent className="h-75">
+                {trafficTimeline.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground">
+                    <Activity className="w-10 h-10 mb-3 opacity-50" />
+                    <p className="text-sm font-semibold">No traffic history yet</p>
+                    <p className="text-xs">Start monitoring to populate the timeline.</p>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={trafficTimeline}>
+                      <defs>
+                        <linearGradient id="colorInbound" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#00d4ff" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorOutbound" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ff6b35" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#ff6b35" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))', fontSize: 11}} />
+                      <YAxis hide />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px' }}
+                        formatter={(value: number) => [value.toLocaleString() + ' packets', '']}
+                      />
+                      <Area type="monotone" dataKey="inbound" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
+                      <Area type="monotone" dataKey="outbound" stroke="#ff6b35" strokeWidth={2} fillOpacity={1} fill="url(#colorOutbound)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
               </CardContent>
             </Card>
           </motion.div>
@@ -290,7 +365,7 @@ export default function TrafficAnalysis() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="h-[180px] mb-4">
+                <div className="h-45 mb-4">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -352,25 +427,31 @@ export default function TrafficAnalysis() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {appLayerData.map((app, i) => (
-                    <div key={app.name} className="space-y-1">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-foreground font-medium">{app.name}</span>
-                        <span className="text-muted-foreground">{app.value.toLocaleString()} packets</span>
+                {appLayerData.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                    No application-level traffic captured yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {appLayerData.map((app, i) => (
+                      <div key={app.name} className="space-y-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-foreground font-medium">{app.name}</span>
+                          <span className="text-muted-foreground">{app.value.toLocaleString()} packets</span>
+                        </div>
+                        <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                          <motion.div 
+                            className="h-full rounded-full"
+                            style={{ backgroundColor: app.color }}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(100, (app.value / Math.max(...appLayerData.map(a => a.value))) * 100)}%` }}
+                            transition={{ duration: 0.5, delay: 0.6 + i * 0.1 }}
+                          />
+                        </div>
                       </div>
-                      <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                        <motion.div 
-                          className="h-full rounded-full"
-                          style={{ backgroundColor: app.color }}
-                          initial={{ width: 0 }}
-                          animate={{ width: `${Math.min(100, (app.value / Math.max(...appLayerData.map(a => a.value))) * 100)}%` }}
-                          transition={{ duration: 0.5, delay: 0.6 + i * 0.1 }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </motion.div>
@@ -389,31 +470,37 @@ export default function TrafficAnalysis() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {topConnections.map((conn, i) => (
-                    <motion.div 
-                      key={i}
-                      className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/30 transition-all"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.7 + i * 0.1 }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
-                          #{i + 1}
+                {topConnections.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                    No active devices reported yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {topConnections.map((conn, i) => (
+                      <motion.div 
+                        key={i}
+                        className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/30 transition-all"
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.7 + i * 0.1 }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                            #{i + 1}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground truncate max-w-37.5">{conn.ip}</p>
+                            <p className="text-xs text-muted-foreground capitalize">{conn.type}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground truncate max-w-[150px]">{conn.ip}</p>
-                          <p className="text-xs text-muted-foreground capitalize">{conn.type}</p>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-foreground">{conn.packets > 0 ? conn.packets.toLocaleString() : '-'}</p>
+                          <p className="text-xs text-muted-foreground">packets</p>
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-foreground">{conn.packets > 0 ? conn.packets.toLocaleString() : '-'}</p>
-                        <p className="text-xs text-muted-foreground">packets</p>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </motion.div>

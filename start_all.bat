@@ -6,15 +6,15 @@ echo.
 echo This script will start both the backend and frontend.
 echo.
 echo [1/2] Starting Flask Backend (Port 5000)...
-start "Packet Peeper Backend" cmd /c "cd /d %~dp0backend && python app.py"
+start "Packet Peeper Backend" cmd /k "cd /d %~dp0 && call start_backend.bat"
 
 echo.
-echo Waiting for backend to initialize...
-timeout /t 3 /nobreak > nul
+echo Waiting for backend setup to initialize...
+timeout /t 5 /nobreak > nul
 
 echo.
 echo [2/2] Starting React Frontend (Port 5173)...
-start "Packet Peeper Frontend" cmd /c "cd /d %~dp0frontend && npm install && npm run dev"
+start "Packet Peeper Frontend" cmd /k "cd /d %~dp0 && call start_frontend.bat"
 
 echo.
 echo ========================================
