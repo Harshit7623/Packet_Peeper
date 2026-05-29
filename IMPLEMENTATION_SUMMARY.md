@@ -251,6 +251,54 @@ curl http://localhost:5000/api/alerts | jq '.[] | {type, severity, timestamp}'
 - [x] AI/Detection settings accessible and changeable
 - [x] Real-time updates from backend
 
+## Deployment Readiness Assessment (May 2026)
+
+**Current rating:** 3/10 (demo-ready, not production-ready)
+
+### Critical Issues (Prioritized)
+
+**P0 - Blockers (must fix before deployment)**
+- **Packet capture permissions**: capture requires sudo; needs a safe, repeatable, non-interactive startup.
+- **Alert + traffic persistence**: restart wipes operational history; reporting is unreliable without durable storage.
+
+**P1 - High risk (fix for stability/accuracy)**
+- **Unbounded memory growth**: in-memory caches and lists grow over long runs.
+- **Thread safety**: shared in-memory structures are accessed by multiple threads without locks.
+
+**P2 - Quality improvements (fix after P0/P1)**
+- **AI cache bounds**: in-memory cache can grow indefinitely.
+- **Event rate control**: periodic updates can overwhelm clients on slow networks.
+
+## Roadmap (Phased)
+
+**Phase 0: Deployment Blockers (3-5 days)**
+1. Establish non-interactive packet capture permissions for runtime.
+2. Add durable alert storage (database) with retention policy.
+3. Persist key traffic metrics on a schedule (e.g., 10s intervals).
+
+**Phase 1: Stability & Accuracy (3-5 days)**
+1. Add bounds and TTL cleanup for in-memory lists and caches.
+2. Guard shared state with locks or thread-safe queues.
+3. Add basic health checks for persistence state in API status.
+
+**Phase 2: Product Quality (4-7 days)**
+1. Add bounded AI response cache with LRU/TTL.
+2. Implement client backpressure or adaptive update frequency.
+3. Add historical views and export endpoints.
+
+## Effort Estimates (Rough)
+
+| Fix | Complexity | Estimate |
+|-----|------------|----------|
+| Packet capture permissions (non-interactive) | M | 1-2 days |
+| Alert persistence + retention | M | 2-3 days |
+| Traffic stats persistence | M | 1-2 days |
+| Memory bounds + cleanup tasks | M | 2-3 days |
+| Thread safety for shared state | M | 1-2 days |
+| AI cache bounding (LRU/TTL) | S | 0.5-1 day |
+| Event rate control | S | 0.5-1 day |
+| Historical views + export | L | 3-5 days |
+
 ## What's Next
 
 Once you've verified packet detection accuracy and AI responses are satisfactory:

@@ -162,6 +162,19 @@ python backend/app.py auto
 python backend/app.py auto
 ```
 
+**Linux note (recommended):** grant packet capture capabilities once so you do not need sudo each run:
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin=eip "/path/to/NetworkSnifferr/.venv/bin/python"
+"/path/to/NetworkSnifferr/.venv/bin/python" backend/app.py auto
+```
+
+If you prefer not to set capabilities, run with sudo using the virtualenv Python:
+
+```bash
+sudo "/path/to/NetworkSnifferr/.venv/bin/python" backend/app.py auto
+```
+
 To find your network interface names:
 ```bash
 # Windows
