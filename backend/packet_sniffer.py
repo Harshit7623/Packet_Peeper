@@ -17,7 +17,10 @@ Enhancements in this version:
 
 from scapy.all import sniff, IP, TCP, UDP, ICMP, conf, get_if_list, get_if_addr, get_if_hwaddr
 from scapy.layers.dns import DNS, DNSQR, DNSRR
-from scapy.layers.tls.all import TLSClientHello
+try:
+    from scapy.layers.tls.all import TLSClientHello
+except (ImportError, ModuleNotFoundError):
+    TLSClientHello = None
 from datetime import datetime
 import os
 import platform
@@ -28,12 +31,23 @@ import socket
 import ipaddress
 import tldextract
 import psutil
+import hashlib
 from network_security_monitor import NetworkSecurityMonitor
-from config.config import CAPTURE_DEBUG
+from config.config import (
+    CAPTURE_DEBUG,
+    CAPTURE_MODE,
+    MAX_PACKET_HISTORY,
+    MAX_CATEGORY_HISTORY,
+    MAX_SECURITY_ALERTS,
+    SERVICE_CACHE_MAX,
+    PACKET_HASH_MAX_BYTES,
+    ENABLE_VENDOR_LOOKUP,
+    BPF_FILTER,
+)
 
 # ---------------- Default BPF Filter ---------------- #
 # Include TCP, UDP, ICMP, and ARP for comprehensive attack detection
-DEFAULT_BPF = (
+DEFAULT_BPF = BPF_FILTER or (
     "(tcp or udp or icmp or arp)"
     " and not (udp and (port 67 or port 68 or port 5353 or port 1900 or port 123))"
 )
@@ -50,6 +64,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("packet_peeper.capture")
+
+
+def _debug_log(message: str):
+    if CAPTURE_DEBUG:
+        logger.debug(message)
 
 # ---------------- Service Map Loader ---------------- #
 def load_service_map(path="service_map.json"):
@@ -78,17 +97,39 @@ SERVICE_MAP = load_service_map()
 DNS_TTL_DEFAULT = 300  # seconds
 
 class ServiceCache:
-    def __init__(self):
+    def __init__(self, max_entries: int):
         self.ip_map = {}
+        self.max_entries = max_entries
+
+    def _prune_expired(self):
+        now = time.time()
+        expired = [
+            ip for ip, meta in self.ip_map.items()
+            if meta.get("expires", 0) < now
+        ]
+        for ip in expired:
+            self.ip_map.pop(ip, None)
+
+    def _enforce_limit(self):
+        if len(self.ip_map) <= self.max_entries:
+            return
+
+        overflow = len(self.ip_map) - self.max_entries
+        oldest = sorted(self.ip_map.items(), key=lambda item: item[1].get("expires", 0))
+        for ip, _ in oldest[:overflow]:
+            self.ip_map.pop(ip, None)
 
     def put(self, ip, hostname, service, ttl=DNS_TTL_DEFAULT):
+        self._prune_expired()
         self.ip_map[ip] = {
             "hostname": hostname,
             "service": service,
             "expires": time.time() + max(30, ttl),
         }
+        self._enforce_limit()
 
     def get(self, ip):
+        self._prune_expired()
         meta = self.ip_map.get(ip)
         if not meta:
             return None
@@ -97,7 +138,8 @@ class ServiceCache:
             return None
         return meta
 
-service_cache = ServiceCache()
+service_cache = ServiceCache(max_entries=SERVICE_CACHE_MAX)
+vendor_cache = {}
 
 # ---------------- Classifier ---------------- #
 def _match_service_from_hostname(hostname: str) -> str:
@@ -239,6 +281,7 @@ def classify_packet_service(packet):
     """Classify packet by DNS hostname, TLS SNI, cache, IP range, or port."""
     hostname = None
     service = "Unknown"
+    capture_mode = CAPTURE_MODE or "full"
 
     src_ip, dst_ip = None, None
     if packet.haslayer(IP):
@@ -266,7 +309,7 @@ def classify_packet_service(packet):
             pass
 
     # TLS SNI
-    elif packet.haslayer(TLSClientHello):
+    elif capture_mode != "lite" and TLSClientHello and packet.haslayer(TLSClientHello):
         try:
             hostname = packet[TLSClientHello].ext_servername.decode()
             for srv, domains in SERVICE_MAP.items():
@@ -335,7 +378,7 @@ class PacketSniffer:
         self.packet_loss_count = 0
         self.latency_samples = []
         self.jitter_samples = []
-        print("PacketSniffer initialized with classification & metrics")
+        logger.info("PacketSniffer initialized with classification & metrics")
         self.discover_devices()
 
     # --- device discovery & stats omitted for brevity (keep your original code) ---
@@ -345,7 +388,7 @@ class PacketSniffer:
             system_name = platform.system().lower()
             host_ip = self.get_host_ip()
             if host_ip:
-                print(f"Host IP detected: {host_ip}")
+                _debug_log(f"Host IP detected: {host_ip}")
 
             if system_name == 'windows':
                 self._discover_devices_windows()
@@ -396,7 +439,7 @@ class PacketSniffer:
             if not (ip_addr and adapter_name):
                 continue
 
-            print(f"Found adapter: {adapter_name} - IP: {ip_addr} - MAC: {mac_addr}")
+            _debug_log(f"Found adapter: {adapter_name} - IP: {ip_addr} - MAC: {mac_addr}")
 
             if netmask:
                 try:
@@ -534,7 +577,7 @@ class PacketSniffer:
                         if ans:
                             mac = ans[0][1].hwsrc
                 except Exception as e:
-                    print(f"Could not get MAC for {ip}: {str(e)}")
+                    _debug_log(f"Could not get MAC for {ip}: {str(e)}")
             
             try:
                 hostname = socket.gethostbyaddr(ip)[0]
@@ -546,17 +589,20 @@ class PacketSniffer:
                     hostname = f"Local Device {len(self.active_devices) + 1}"
                 else:
                     hostname = f"Remote Device {len(self.active_devices) + 1}"
-                print(f"Could not resolve hostname for {ip}: {str(e)}")
+                _debug_log(f"Could not resolve hostname for {ip}: {str(e)}")
 
             device_type = 'Unknown'
-            if mac:
-                # Check OUI (first 6 chars of MAC) to determine manufacturer
+            if mac and ENABLE_VENDOR_LOOKUP:
                 try:
-                    import requests
                     oui = mac.replace(':', '').upper()[:6]
-                    response = requests.get(f'https://api.macvendors.com/{oui}', timeout=2)
-                    if response.status_code == 200:
-                        device_type = response.text
+                    if oui in vendor_cache:
+                        device_type = vendor_cache[oui]
+                    else:
+                        import requests
+                        response = requests.get(f'https://api.macvendors.com/{oui}', timeout=2)
+                        if response.status_code == 200:
+                            device_type = response.text
+                        vendor_cache[oui] = device_type
                 except Exception:
                     pass
 
@@ -573,7 +619,7 @@ class PacketSniffer:
                 'bytesOut': 0,
                 'status': 'Active'
             }
-            print(f"New device detected: IP={ip}, MAC={mac}, Type={device_type}")
+            _debug_log(f"New device detected: IP={ip}, MAC={mac}, Type={device_type}")
         
         device = self.active_devices[ip]
         device['lastSeen'] = current_time
@@ -705,7 +751,7 @@ class PacketSniffer:
                 ip_layer = packet[IP]
                 packet_info["src_ip"] = ip_layer.src
                 packet_info["dst_ip"] = ip_layer.dst
-                print(f"Captured packet with IPs: {ip_layer.src} -> {ip_layer.dst}")
+                _debug_log(f"Captured packet with IPs: {ip_layer.src} -> {ip_layer.dst}")
             if packet.haslayer(IP):
                 ip_layer = packet[IP]
                 packet_info["src_ip"] = ip_layer.src
@@ -720,7 +766,10 @@ class PacketSniffer:
                     packet_info["tcp_flags"] = int(tcp.flags)
                 except:
                     packet_info["tcp_flags"] = 0
-                print(f"[TCP FLAGS] {packet_info['src_ip']}:{tcp.sport} -> {packet_info['dst_ip']}:{tcp.dport} flags={packet_info['tcp_flags']} ({tcp.flags})")
+                _debug_log(
+                    f"[TCP FLAGS] {packet_info['src_ip']}:{tcp.sport} -> "
+                    f"{packet_info['dst_ip']}:{tcp.dport} flags={packet_info['tcp_flags']} ({tcp.flags})"
+                )
                 self.tcp_count += 1
             elif packet.haslayer(UDP):
                 udp = packet[UDP]
@@ -745,7 +794,7 @@ class PacketSniffer:
                     packet_info["arp_dst_mac"] = arp.hwdst
                     packet_info["src_ip"] = arp.psrc
                     packet_info["dst_ip"] = arp.pdst
-                    print(f"[ARP] op={arp.op} {arp.psrc} ({arp.hwsrc}) -> {arp.pdst} ({arp.hwdst})")
+                    _debug_log(f"[ARP] op={arp.op} {arp.psrc} ({arp.hwsrc}) -> {arp.pdst} ({arp.hwdst})")
             except:
                 pass
             
@@ -762,6 +811,12 @@ class PacketSniffer:
             # Classification
             packet_info["service"] = classify_packet_service(packet)
             srv = packet_info["service"]
+            if PACKET_HASH_MAX_BYTES > 0 and CAPTURE_MODE != "lite":
+                try:
+                    raw_bytes = bytes(packet)
+                    packet_info["payload_hash"] = hashlib.sha256(raw_bytes[:PACKET_HASH_MAX_BYTES]).hexdigest()
+                except Exception as e:
+                    _debug_log(f"Failed to hash packet payload: {e}")
             # Metrics
             self.metrics["total"] += 1
             if srv != "Unknown":
@@ -771,9 +826,12 @@ class PacketSniffer:
             self.metrics["by_service"][srv] = self.metrics["by_service"].get(srv, 0) + 1
             # Store & categorize
             self.captured_packets.append(packet_info)
-            if len(self.captured_packets) > 10000:
-                self.captured_packets = self.captured_packets[-5000:]
+            if len(self.captured_packets) > MAX_PACKET_HISTORY:
+                self.captured_packets = self.captured_packets[-MAX_PACKET_HISTORY:]
+
             self.categories.setdefault(srv, []).append(packet_info)
+            if len(self.categories[srv]) > MAX_CATEGORY_HISTORY:
+                self.categories[srv] = self.categories[srv][-MAX_CATEGORY_HISTORY:]
             
             # Update active devices
             if packet.haslayer(IP):
@@ -797,39 +855,44 @@ class PacketSniffer:
                 self.update_active_device(packet_info["dst_ip"], dst_mac, False, len(packet))
                 
                 # Log current active devices with enhanced details
-                print(f"\nActive devices ({len(self.active_devices)}):")
+                _debug_log(f"Active devices ({len(self.active_devices)}):")
                 for ip, device in self.active_devices.items():
-                    print(f"Device: {device['hostname']} ({ip})")
-                    print(f"  MAC: {device['macAddress']}")
-                    print(f"  Type: {device['type']}")
-                    print(f"  Traffic: {device['packetsIn']} in, {device['packetsOut']} out")
-                    print(f"  Last seen: {device['lastSeen']}")
+                    _debug_log(f"Device: {device['hostname']} ({ip})")
+                    _debug_log(f"  MAC: {device['macAddress']}")
+                    _debug_log(f"  Type: {device['type']}")
+                    _debug_log(f"  Traffic: {device['packetsIn']} in, {device['packetsOut']} out")
+                    _debug_log(f"  Last seen: {device['lastSeen']}")
             
             # Security Analysis
-            print(f"\nAnalyzing packet for security: {packet_info['protocol']} {packet_info['src_ip']} -> {packet_info['dst_ip']}")
+            _debug_log(
+                f"Analyzing packet for security: {packet_info['protocol']} "
+                f"{packet_info['src_ip']} -> {packet_info['dst_ip']}"
+            )
             alerts = self.security_monitor.analyze_packet(packet_info)
             
             if alerts:
-                print(f"Found {len(alerts)} security alerts!")
+                _debug_log(f"Found {len(alerts)} security alerts!")
                 for alert in alerts:
                     alert_hash = f"{alert['title']}-{alert['source']}-{time.time() // 300}"  # 5-minute window
                     
                     # Check if this exact alert was recently issued
                     if alert_hash not in [a.get('hash', '') for a in self.security_alerts[-10:]]:
                         self.security_alerts.append({**alert, 'hash': alert_hash})
+                        if len(self.security_alerts) > MAX_SECURITY_ALERTS:
+                            self.security_alerts = self.security_alerts[-MAX_SECURITY_ALERTS:]
                         
-                        print(f"\n[ALERT] {alert['title']}")
-                        print(f"Description: {alert['description']}")
-                        print(f"Severity: {alert['severity']}")
-                        print(f"Source: {alert['source']}")
-                        print(f"Timestamp: {alert['timestamp']}")
+                        _debug_log(f"[ALERT] {alert['title']}")
+                        _debug_log(f"Description: {alert['description']}")
+                        _debug_log(f"Severity: {alert['severity']}")
+                        _debug_log(f"Source: {alert['source']}")
+                        _debug_log(f"Timestamp: {alert['timestamp']}")
                         
                         # Pass alert through callback to ensure it reaches the frontend
                         if self.callback:
                             alert_copy = alert.copy()
                             alert_copy['alert_type'] = 'security'  # Mark as security alert
                             alert_copy['packet_info'] = packet_info  # Include triggering packet
-                            print("Sending alert to frontend via callback")
+                            _debug_log("Sending alert to frontend via callback")
                             self.callback(alert_copy)
             # Signature-based detection (simple TCP flags)
             if packet_info["protocol"] == "TCP":
@@ -853,11 +916,13 @@ class PacketSniffer:
                         }
                         if alert not in self.security_alerts:
                             self.security_alerts.append(alert)
+                            if len(self.security_alerts) > MAX_SECURITY_ALERTS:
+                                self.security_alerts = self.security_alerts[-MAX_SECURITY_ALERTS:]
             # Callback
             if self.callback:
                 self.callback(packet_info)
         except Exception as e:
-            print(f"Error handling packet: {e}")
+            logger.error(f"Error handling packet: {e}")
 
     def start_sniffing(self, interface="auto", bpf=None):
         import traceback
@@ -895,8 +960,16 @@ class PacketSniffer:
                     break
 
             if not actual_interface:
-                logger.warning(f"Interface {interface} not found exactly, using as-is")
-                actual_interface = interface
+                preferred = [i for i in available_interfaces if not i.lower().startswith('lo')]
+                if preferred:
+                    actual_interface = preferred[0]
+                elif available_interfaces:
+                    actual_interface = available_interfaces[0]
+                else:
+                    raise RuntimeError("No network interfaces found for packet capture")
+                logger.warning(
+                    f"Interface {interface} not found; falling back to {actual_interface}"
+                )
         
             logger.info(f"Starting capture on interface: {actual_interface}")
             logger.info("Waiting for packets...")
@@ -1011,7 +1084,7 @@ class PacketSniffer:
             s.close()
             return host_ip
         except Exception as e:
-            print(f"Error getting host IP: {str(e)}")
+            logger.error(f"Error getting host IP: {str(e)}")
             return None
 
     def get_packets_by_service(self, service=None, since_seconds=None):

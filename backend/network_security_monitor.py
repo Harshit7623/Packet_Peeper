@@ -241,7 +241,9 @@ class NetworkSecurityMonitor:
         self.login_attempts = {}
         self.beacon_tracker = {}
         self.packet_stats = {
-            'total': 0, 'malicious': 0, 'suspicious': 0, 'clean': 0, 'protocols': {}
+            'total': 0, 'tcp': 0, 'udp': 0, 'icmp': 0, 'dns': 0, 
+            'http': 0, 'https': 0, 'arp': 0, 'other': 0,
+            'malicious': 0, 'suspicious': 0
         }
         logger.info("[Security] NetworkSecurityMonitor counters reset")
     
@@ -383,7 +385,7 @@ class NetworkSecurityMonitor:
                     self._process_alert(alert, packet)
             
         except Exception as e:
-            logger.error(f"Error analyzing packet: {e}")
+            logger.error(f"Error analyzing packet: {type(e).__name__}: {str(e)}", exc_info=True)
         
         return [a for a in alerts if a is not None]
     
@@ -944,6 +946,26 @@ class NetworkSecurityMonitor:
         elif src_ip == '0.0.0.0' and packet.get('dst_port') not in [67, 68]:
             suspicious = True
             reason = 'Null address as source'
+        
+        # Check for source IPs outside local network (10.48.58.0/24)
+        # IPs like 10.0.0.1, 172.16.x.x, 192.168.x.x from other subnets are suspicious
+        elif not src_ip.startswith('10.48.58.'):
+            # Exception: loopback (127.x.x.x) is also suspicious on remote interface
+            if src_ip.startswith('127.'):
+                suspicious = True
+                reason = 'Loopback address as remote source'
+            # Private addresses from wrong subnets
+            elif (src_ip.startswith('10.') or src_ip.startswith('172.16.') or 
+                  src_ip.startswith('172.17.') or src_ip.startswith('172.18.') or
+                  src_ip.startswith('172.19.') or src_ip.startswith('172.20.') or
+                  src_ip.startswith('172.21.') or src_ip.startswith('172.22.') or
+                  src_ip.startswith('172.23.') or src_ip.startswith('172.24.') or
+                  src_ip.startswith('172.25.') or src_ip.startswith('172.26.') or
+                  src_ip.startswith('172.27.') or src_ip.startswith('172.28.') or
+                  src_ip.startswith('172.29.') or src_ip.startswith('172.30.') or
+                  src_ip.startswith('172.31.') or src_ip.startswith('192.168.')):
+                suspicious = True
+                reason = f'Private IP from non-local subnet: {src_ip}'
         
         if suspicious:
             logger.warning(f"[ALERT] IP spoofing detected: {src_ip}")

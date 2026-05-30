@@ -13,6 +13,8 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 from datetime import datetime
 
+from config.config import AI_CACHE_TTL, AI_CACHE_MAX, AI_DEBUG
+
 logger = logging.getLogger('packet_peeper.ai')
 
 
@@ -62,7 +64,8 @@ class AISecurityAssistant:
         self.model = os.getenv("AI_MODEL", "gpt-4o-mini")
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.cache = {}  # Simple in-memory cache
-        self.cache_ttl = 3600  # 1 hour cache
+        self.cache_ttl = AI_CACHE_TTL
+        self.cache_max = AI_CACHE_MAX
         
         logger.info(f"[AI] Assistant initialized with provider: {self.provider.value}")
     
@@ -95,6 +98,7 @@ class AISecurityAssistant:
     
     def _check_cache(self, cache_key: str) -> Optional[AIResponse]:
         """Check if response is cached and still valid"""
+        self._prune_cache()
         if cache_key in self.cache:
             cached_time, response = self.cache[cache_key]
             if time.time() - cached_time < self.cache_ttl:
@@ -105,6 +109,28 @@ class AISecurityAssistant:
     def _save_cache(self, cache_key: str, response: AIResponse):
         """Save response to cache"""
         self.cache[cache_key] = (time.time(), response)
+        self._prune_cache()
+
+    def _prune_cache(self) -> None:
+        """Remove expired cache entries and enforce max size."""
+        if not self.cache:
+            return
+
+        now = time.time()
+        expired_keys = [
+            key for key, (cached_time, _) in self.cache.items()
+            if now - cached_time >= self.cache_ttl
+        ]
+        for key in expired_keys:
+            self.cache.pop(key, None)
+
+        if len(self.cache) <= self.cache_max:
+            return
+
+        overflow = len(self.cache) - self.cache_max
+        oldest = sorted(self.cache.items(), key=lambda item: item[1][0])
+        for key, _ in oldest[:overflow]:
+            self.cache.pop(key, None)
     
     def get_remediation(self, alert: Dict) -> AIResponse:
         """
@@ -149,8 +175,13 @@ class AISecurityAssistant:
         
         alert_type = alert_type_raw.lower().replace(' ', '_').replace('-', '_')
         
-        # Debug logging - print what we're processing
-        print(f"[AI] Processing alert: raw_type='{alert_type_raw}', normalized='{alert_type}', title='{alert.get('title', 'N/A')}'")
+        if AI_DEBUG:
+            logger.debug(
+                "[AI] Processing alert: raw_type='%s', normalized='%s', title='%s'",
+                alert_type_raw,
+                alert_type,
+                alert.get('title', 'N/A')
+            )
         logger.info(f"[AI] Alert type normalized: '{alert_type_raw}' -> '{alert_type}'")
         
         context = {
@@ -165,7 +196,8 @@ class AISecurityAssistant:
         cache_key = f"{alert_type}_{context['severity']}"
         cached = self._check_cache(cache_key)
         if cached:
-            print(f"[AI] Returning CACHED response for type='{alert_type}'")
+            if AI_DEBUG:
+                logger.debug("[AI] Returning cached response for type='%s'", alert_type)
             return cached
         
         # Route to appropriate provider
@@ -335,7 +367,8 @@ Remember: The user is NOT technical. Use simple language like you're explaining 
         severity = context.get('severity', 'medium')
         source = context.get('source', 'unknown device')
         
-        print(f"[AI] Looking up fallback response for: '{alert_type}'")
+        if AI_DEBUG:
+            logger.debug("[AI] Looking up fallback response for: '%s'", alert_type)
         
         # Comprehensive fallback responses for each attack type
         responses = {

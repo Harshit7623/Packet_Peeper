@@ -15,12 +15,9 @@ import logging.handlers
 import datetime
 import os
 import socket
-import secrets
-from collections import defaultdict
-from functools import wraps
+from collections import defaultdict, deque
 from pathlib import Path
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from werkzeug.security import check_password_hash, generate_password_hash
+from services.auth_service import AuthService, require_auth
 
 # Import config first (before anything else)
 from config.config import (
@@ -28,7 +25,13 @@ from config.config import (
     LOG_LEVEL, LOG_FILE, LOG_FORMAT, LOG_MAX_BYTES, LOG_BACKUP_COUNT,
     SOCKETIO_PING_TIMEOUT, SOCKETIO_PING_INTERVAL, SOCKETIO_TRANSPORTS,
     ALERT_MAX_STORED, FEATURES, ASYNC_PROCESSING, CAPTURE_INTERFACE,
-    ENABLE_AUTH, AUTH_TOKEN_EXPIRY, JWT_SECRET
+    ENABLE_AUTH, AUTH_TOKEN_EXPIRY, JWT_SECRET,
+    TRAFFIC_STATS_INTERVAL, TRAFFIC_STATS_RETENTION_DAYS,
+    LOG_MAX_STORED, DEVICE_UPDATE_INTERVAL, TRAFFIC_UPDATE_INTERVAL,
+    DB_CLEANUP_INTERVAL_HOURS,
+    SOCKETIO_ASYNC_MODE,
+    AUTO_START_SNIFFING,
+    PACKET_DEDUP_WINDOW_SECONDS, PACKET_DEDUP_MAX
 )
 
 # Import services
@@ -42,11 +45,6 @@ from network_security_monitor import NetworkSecurityMonitor
 # ============== FLASK SETUP ==============
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIST_DIR = PROJECT_ROOT / 'frontend' / 'dist'
-
-AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
-AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "admin123")
-AUTH_PASSWORD_HASH = os.getenv("AUTH_PASSWORD_HASH") or generate_password_hash(AUTH_PASSWORD)
-AUTH_TOKEN_SALT = "packet-peeper-auth"
 
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "300"))
@@ -106,7 +104,7 @@ logger.addHandler(console_handler)
 socketio = SocketIO(
     app,
     cors_allowed_origins=socketio_cors_allowed_origins,
-    async_mode='threading',
+    async_mode=SOCKETIO_ASYNC_MODE,
     logger=FLASK_DEBUG,
     engineio_logger=FLASK_DEBUG,
     ping_timeout=SOCKETIO_PING_TIMEOUT,
@@ -124,13 +122,17 @@ logs = []
 sniffer = None
 db_service = None
 start_time = time.time()  # Application start time
-auth_serializer = URLSafeTimedSerializer(JWT_SECRET)
-active_sessions = {}
-revoked_sessions = set()
+auth_service = None
 rate_limit_state = defaultdict(list)
+last_traffic_persist_ts = 0.0
+alerts_lock = threading.Lock()
+logs_lock = threading.Lock()
+recent_packet_hashes = deque()
+recent_packet_hash_set = set()
 
 PUBLIC_API_PATHS = {
     '/api/auth/login',
+    '/api/auth/register',
     '/api/auth/status',
     '/api/health',
 }
@@ -141,6 +143,14 @@ try:
     logger.info("[OK] Database service initialized")
 except Exception as e:
     logger.warning(f"[WARN] Database initialization failed: {str(e)}")
+
+# ============== AUTH SERVICE INITIALIZATION ==============
+try:
+    auth_service = AuthService(jwt_secret=JWT_SECRET, db_service=db_service, token_expiry=AUTH_TOKEN_EXPIRY)
+    logger.info("[OK] Authentication service initialized")
+except Exception as e:
+    auth_service = None
+    logger.warning(f"[WARN] Authentication service initialization failed: {str(e)}")
 
 # ============== PACKET PROCESSOR INITIALIZATION ==============
 try:
@@ -160,10 +170,11 @@ def add_log(level: str, source: str, message: str):
         'source': source,
         'message': message
     }
-    
-    logs.append(log_entry)
-    if len(logs) > 1000:
-        logs.pop(0)
+
+    with logs_lock:
+        logs.append(log_entry)
+        while len(logs) > LOG_MAX_STORED:
+            logs.pop(0)
     
     # Log to file
     log_method = getattr(logger, level.lower(), logger.info)
@@ -215,20 +226,56 @@ def _check_rate_limit(scope: str, max_requests: int, window_seconds: int):
 
 
 def _cleanup_expired_sessions():
-    """Trim expired in-memory sessions and revocation markers."""
-    if not active_sessions:
+    """Trim expired sessions."""
+    if auth_service:
+        auth_service.cleanup_expired_sessions()
+
+
+def _parse_iso_datetime(value: str | None) -> datetime.datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+
+def _normalize_alert(alert: dict) -> dict:
+    """Ensure alert payload contains required fields for clients and storage."""
+    normalized = dict(alert or {})
+    if normalized.get('type') and not normalized.get('alert_type'):
+        normalized['alert_type'] = normalized.get('type')
+    normalized.setdefault('severity', 'medium')
+    normalized.setdefault('timestamp', datetime.datetime.now().isoformat())
+    normalized.setdefault('title', normalized.get('type', 'Security Alert'))
+    normalized.setdefault('description', normalized.get('title'))
+    if not normalized.get('source'):
+        normalized['source'] = normalized.get('source_ip', 'unknown')
+    return normalized
+
+
+def _persist_traffic_stats(stats: dict) -> None:
+    """Persist traffic stats on a fixed interval to reduce write volume."""
+    global last_traffic_persist_ts
+    if not db_service or not FEATURES['persistent_storage']:
         return
 
     now = time.time()
-    expired_ids = [
-        session_id
-        for session_id, data in active_sessions.items()
-        if now - data.get('iat', now) > AUTH_TOKEN_EXPIRY
-    ]
+    if now - last_traffic_persist_ts < TRAFFIC_STATS_INTERVAL:
+        return
 
-    for session_id in expired_ids:
-        active_sessions.pop(session_id, None)
-        revoked_sessions.discard(session_id)
+    last_traffic_persist_ts = now
+    payload = {
+        'total_packets': stats.get('totalPackets', 0),
+        'tcp_packets': stats.get('tcpPackets', 0),
+        'udp_packets': stats.get('udpPackets', 0),
+        'icmp_packets': stats.get('icmpPackets', 0),
+        'current_bandwidth': stats.get('currentBandwidth', 0),
+        'peak_bandwidth': stats.get('peakBandwidth', 0),
+        'average_bandwidth': stats.get('averageBandwidth', 0),
+    }
+
+    db_service.save_traffic_stats(payload)
 
 
 def _extract_token_from_request() -> str:
@@ -239,98 +286,30 @@ def _extract_token_from_request() -> str:
     return request.cookies.get('pp_auth_token', '').strip()
 
 
-def _issue_access_token(username: str):
-    session_id = secrets.token_urlsafe(16)
-    issued_at = int(time.time())
-    payload = {
-        'sub': username,
-        'sid': session_id,
-        'iat': issued_at,
-    }
-
-    token = auth_serializer.dumps(payload, salt=AUTH_TOKEN_SALT)
-    active_sessions[session_id] = {
-        'username': username,
-        'iat': issued_at,
-        'ip': _get_client_ip(),
-    }
-    return token, payload
-
-
-def _verify_access_token(token: str):
-    if not token:
-        return None, 'missing_token'
-
-    try:
-        payload = auth_serializer.loads(
-            token,
-            salt=AUTH_TOKEN_SALT,
-            max_age=AUTH_TOKEN_EXPIRY,
-        )
-    except SignatureExpired:
-        return None, 'token_expired'
-    except BadSignature:
-        return None, 'invalid_token'
-
-    session_id = payload.get('sid')
-    username = payload.get('sub')
-
-    if not session_id or not username:
-        return None, 'invalid_token'
-
-    if session_id in revoked_sessions:
-        return None, 'token_revoked'
-
-    session_data = active_sessions.get(session_id)
-    if not session_data:
-        return None, 'session_not_found'
-
-    if session_data.get('username') != username:
-        return None, 'invalid_session'
-
-    session_data['last_seen'] = int(time.time())
-    return payload, None
-
-
-def auth_required(func):
-    """Decorator for API routes that require authenticated access."""
-
-    @wraps(func)
-    def wrapped(*args, **kwargs):
-        if not ENABLE_AUTH:
-            return func(*args, **kwargs)
-
-        payload, error_code = _verify_access_token(_extract_token_from_request())
-        if error_code:
-            return jsonify({'error': 'Authentication required', 'code': error_code}), 401
-
-        g.current_user = payload.get('sub')
-        g.current_session_id = payload.get('sid')
-        return func(*args, **kwargs)
-
-    return wrapped
+ 
 
 def broadcast_alert(alert_type: str, message: str, severity: str = 'medium',
                    source: str = 'System', additional_info: dict = None) -> bool:
     """Broadcast alert to all connected clients"""
     try:
         timestamp = datetime.datetime.now().isoformat()
-        alert = {
-            'id': len(alerts) + 1,
-            'type': alert_type,
-            'title': message[:50] + '...' if len(message) > 50 else message,
-            'description': message,
-            'timestamp': timestamp,
-            'source': source,
-            'severity': severity,
-        }
-        
-        if additional_info:
-            alert.update(additional_info)
-        
-        alerts.insert(0, alert)
-        if len(alerts) > ALERT_MAX_STORED:
-            alerts.pop()
+        with alerts_lock:
+            alert = {
+                'id': len(alerts) + 1,
+                'type': alert_type,
+                'title': message[:50] + '...' if len(message) > 50 else message,
+                'description': message,
+                'timestamp': timestamp,
+                'source': source,
+                'severity': severity,
+            }
+
+            if additional_info:
+                alert.update(additional_info)
+
+            alerts.insert(0, alert)
+            if len(alerts) > ALERT_MAX_STORED:
+                alerts.pop()
         
         # Save to database if enabled
         if db_service and FEATURES['persistent_storage']:
@@ -352,20 +331,23 @@ def security_alert_callback(alert: dict):
     try:
         if alert is None:
             return  # Alert was filtered by rate limiter
+
+        alert = _normalize_alert(alert)
             
         # Check for duplicate alerts of same type (within last 20)
         alert_type = alert.get('type')
-        existing_count = sum(1 for a in alerts[:20] if a.get('type') == alert_type)
-        
-        # Skip if we already have 3+ of this alert type in recent history
-        if existing_count >= 3:
-            logger.debug(f"Skipping duplicate alert type: {alert_type} (already {existing_count})")
-            return
-        
-        # Add to alerts list
-        alerts.insert(0, alert)
-        if len(alerts) > ALERT_MAX_STORED:
-            alerts.pop()
+        with alerts_lock:
+            existing_count = sum(1 for a in alerts[:20] if a.get('type') == alert_type)
+            
+            # Skip if we already have 3+ of this alert type in recent history
+            if existing_count >= 3:
+                logger.debug(f"Skipping duplicate alert type: {alert_type} (already {existing_count})")
+                return
+            
+            # Add to alerts list
+            alerts.insert(0, alert)
+            if len(alerts) > ALERT_MAX_STORED:
+                alerts.pop()
         
         # Save to database if enabled
         if db_service and FEATURES['persistent_storage']:
@@ -396,9 +378,30 @@ def packet_callback(packet_info: dict):
         # Emit packet via WebSocket
         socketio.emit('new_packet', packet_info, namespace='/')
         
-        # Save to database if enabled
+        # Save to database if enabled (with lightweight dedup window)
         if db_service and FEATURES['persistent_storage']:
-            db_service.save_packet(packet_info)
+            should_save = True
+            payload_hash = packet_info.get('payload_hash')
+            if payload_hash and PACKET_DEDUP_WINDOW_SECONDS > 0:
+                now = time.time()
+                while recent_packet_hashes:
+                    oldest_ts, oldest_hash = recent_packet_hashes[0]
+                    if now - oldest_ts <= PACKET_DEDUP_WINDOW_SECONDS:
+                        break
+                    recent_packet_hashes.popleft()
+                    recent_packet_hash_set.discard(oldest_hash)
+
+                if payload_hash in recent_packet_hash_set:
+                    should_save = False
+                else:
+                    recent_packet_hashes.append((now, payload_hash))
+                    recent_packet_hash_set.add(payload_hash)
+                    if len(recent_packet_hashes) > PACKET_DEDUP_MAX:
+                        old_ts, old_hash = recent_packet_hashes.popleft()
+                        recent_packet_hash_set.discard(old_hash)
+
+            if should_save:
+                db_service.save_packet(packet_info)
         
         # Get updated statistics
         if sniffer:
@@ -412,35 +415,52 @@ def packet_callback(packet_info: dict):
                    f"{packet_info.get('src_ip')} -> {packet_info.get('dst_ip')}")
     
     except Exception as e:
-        logger.error(f"Error in packet callback: {str(e)}")
+        logger.error(f"Error in packet callback: {type(e).__name__}: {str(e)}", exc_info=True)
+
+
+def _collect_device_snapshot() -> list[dict]:
+    """Collect interface and active device views into a single list."""
+    if not sniffer:
+        return []
+
+    devices = sniffer.get_devices() if hasattr(sniffer, 'get_devices') else []
+    active_devices = list(getattr(sniffer, 'active_devices', {}).values())
+
+    merged = []
+    seen_ips = set()
+
+    for device in devices:
+        ip = device.get('ipAddress') or device.get('ip_address')
+        if ip:
+            seen_ips.add(ip)
+        merged.append(device)
+
+    for device in active_devices:
+        ip = device.get('ipAddress') or device.get('ip_address')
+        if ip and ip in seen_ips:
+            continue
+        merged.append(device)
+
+    return merged
 
 def device_update_loop():
     """Periodically broadcast device updates"""
     while True:
         try:
             if sniffer:
-                devices = sniffer.get_devices()
-                active_devices = list(sniffer.active_devices.values())
-                
-                all_devices = []
-                seen_ips = set()
-                
-                for device in devices:
-                    if device.get('ipAddress'):
-                        all_devices.append(device)
-                        seen_ips.add(device['ipAddress'])
-                
-                for device in active_devices:
-                    if device.get('ipAddress') and device['ipAddress'] not in seen_ips:
-                        all_devices.append(device)
+                all_devices = _collect_device_snapshot()
                 
                 socketio.emit('devices_update', {
                     'devices': all_devices,
                     'timestamp': time.time(),
                     'totalDevices': len(all_devices),
                 }, namespace='/')
+
+                if db_service and FEATURES['persistent_storage']:
+                    for device in all_devices:
+                        db_service.update_device(device)
             
-            time.sleep(2)
+            time.sleep(DEVICE_UPDATE_INTERVAL)
         
         except Exception as e:
             logger.error(f"Error in device update loop: {str(e)}")
@@ -467,12 +487,26 @@ def traffic_update_loop():
                     },
                     'protocols': protocols,
                 }, namespace='/')
+
+                _persist_traffic_stats(stats)
             
-            time.sleep(1)
+            time.sleep(TRAFFIC_UPDATE_INTERVAL)
         
         except Exception as e:
-            logger.error(f"Error in traffic update loop: {str(e)}")
+            logger.error(f"Error in traffic update loop: {type(e).__name__}: {str(e)}", exc_info=True)
             time.sleep(5)
+
+def database_cleanup_loop():
+    """Periodically clean up old database records."""
+    interval_seconds = max(1, DB_CLEANUP_INTERVAL_HOURS) * 3600
+    while True:
+        try:
+            if db_service and FEATURES['persistent_storage']:
+                db_service.cleanup_old_records(days=TRAFFIC_STATS_RETENTION_DAYS)
+            time.sleep(interval_seconds)
+        except Exception as e:
+            logger.error(f"Error in database cleanup loop: {str(e)}")
+            time.sleep(300)
 
 # ============== FLASK ROUTES ==============
 
@@ -480,6 +514,7 @@ def traffic_update_loop():
 @app.before_request
 def handle_preflight_and_guards():
     _cleanup_expired_sessions()
+    g.auth_service = auth_service
 
     if request.method == "OPTIONS":
         response = app.make_default_options_response()
@@ -500,11 +535,17 @@ def handle_preflight_and_guards():
         }), 429
 
     if ENABLE_AUTH and request.path not in PUBLIC_API_PATHS:
-        payload, error_code = _verify_access_token(_extract_token_from_request())
+        if not auth_service:
+            return jsonify({'error': 'Authentication service unavailable'}), 500
+
+        token = _extract_token_from_request()
+        payload, error_code = auth_service.verify_token(token)
         if error_code:
             return jsonify({'error': 'Authentication required', 'code': error_code}), 401
 
         g.current_user = payload.get('sub')
+        g.current_user_id = payload.get('uid')
+        g.current_role = payload.get('role')
         g.current_session_id = payload.get('sid')
 
     return None
@@ -570,33 +611,37 @@ def api_auth_login():
         }), 429
 
     payload = request.get_json(silent=True) or {}
-    username = (payload.get('username') or '').strip()
+    identifier = (payload.get('username') or payload.get('email') or '').strip()
     password = payload.get('password') or ''
 
-    if not username or not password:
-        return jsonify({'error': 'Username and password are required'}), 400
+    if not identifier or not password:
+        return jsonify({'error': 'Username/email and password are required'}), 400
 
-    is_valid_user = username == AUTH_USERNAME
-    is_valid_password = False
+    if not auth_service:
+        return jsonify({'error': 'Authentication service unavailable'}), 500
 
-    if is_valid_user:
-        try:
-            is_valid_password = check_password_hash(AUTH_PASSWORD_HASH, password)
-        except Exception:
-            is_valid_password = False
+    # Get device info
+    device_info = {
+        'ip_address': _get_client_ip(),
+        'mac_address': payload.get('mac_address', 'unknown'),
+        'hostname': socket.gethostname(),
+        'user_agent': request.headers.get('User-Agent', 'unknown'),
+    }
 
-    if not (is_valid_user and is_valid_password):
-        add_log('warning', 'Auth', f'Failed login attempt for user "{username}" from {_get_client_ip()}')
-        return jsonify({'error': 'Invalid username or password'}), 401
+    success, message, token, user_data = auth_service.login_user(identifier, password, device_info)
 
-    token, _ = _issue_access_token(username)
-    add_log('info', 'Auth', f'User "{username}" authenticated from {_get_client_ip()}')
+    if not success:
+        add_log('warning', 'Auth', f'Failed login attempt for user "{identifier}" from {_get_client_ip()}')
+        return jsonify({'error': message}), 401
 
+    add_log('info', 'Auth', f'User "{identifier}" authenticated from {_get_client_ip()}')
+
+    # Generate and return token (UserService provides signed token)
     response = jsonify({
         'message': 'Login successful',
         'token': token,
         'expires_in': AUTH_TOKEN_EXPIRY,
-        'user': {'username': username},
+        'user': user_data,
         'auth_enabled': True,
     })
 
@@ -612,6 +657,52 @@ def api_auth_login():
     return response
 
 
+@app.route('/api/auth/register', methods=['POST'])
+def api_auth_register():
+    """Register a new user account (local authentication only)."""
+    if not ENABLE_AUTH or not auth_service:
+        return jsonify({'error': 'User registration is disabled'}), 400
+
+    allowed, retry_after = _check_rate_limit('auth-register', RATE_LIMIT_LOGIN_ATTEMPTS * 2, RATE_LIMIT_WINDOW_SECONDS)
+    if not allowed:
+        return jsonify({
+            'error': 'Too many registration attempts',
+            'retry_after_seconds': retry_after,
+        }), 429
+
+    payload = request.get_json(silent=True) or {}
+    username = (payload.get('username') or '').strip()
+    email = (payload.get('email') or '').strip()
+    password = payload.get('password') or ''
+    password_confirm = payload.get('password_confirm') or ''
+
+    if not username or not email or not password or not password_confirm:
+        return jsonify({'error': 'Username, email, and passwords are required'}), 400
+
+    if password != password_confirm:
+        return jsonify({'error': 'Passwords do not match'}), 400
+
+    # Get device info from request
+    device_info = {
+        'ip_address': payload.get('ip_address', _get_client_ip()),
+        'mac_address': payload.get('mac_address', 'unknown'),
+        'hostname': socket.gethostname(),
+        'user_agent': request.headers.get('User-Agent', 'unknown'),
+    }
+
+    success, message, user_data = auth_service.register_user(username, email, password, device_info)
+    
+    if not success:
+        logger.warning(f'Registration failed for {username}: {message}')
+        return jsonify({'error': message}), 400
+
+    logger.info(f'New user registered: {username}')
+    return jsonify({
+        'message': 'User registered successfully',
+        'user': user_data,
+    }), 201
+
+
 @app.route('/api/auth/status', methods=['GET'])
 def api_auth_status():
     """Return current authentication state for the caller."""
@@ -623,8 +714,11 @@ def api_auth_status():
             'expires_in': None,
         })
 
+    if not auth_service:
+        return jsonify({'auth_enabled': True, 'authenticated': False, 'error': 'auth_unavailable'}), 500
+
     token = _extract_token_from_request()
-    payload, error_code = _verify_access_token(token)
+    payload, error_code = auth_service.verify_token(token)
     if error_code:
         return jsonify({
             'auth_enabled': True,
@@ -632,11 +726,15 @@ def api_auth_status():
             'error': error_code,
         })
 
-    expires_in = max(0, AUTH_TOKEN_EXPIRY - int(time.time()) + int(payload.get('iat', time.time())))
+    exp_timestamp = int(payload.get('exp', 0))
+    expires_in = max(0, exp_timestamp - int(time.time()))
     return jsonify({
         'auth_enabled': True,
         'authenticated': True,
-        'user': {'username': payload.get('sub')},
+        'user': {
+            'username': payload.get('sub'),
+            'role': payload.get('role'),
+        },
         'expires_in': expires_in,
     })
 
@@ -648,17 +746,147 @@ def api_auth_logout():
         return jsonify({'message': 'Authentication is disabled'}), 200
 
     token = _extract_token_from_request()
-    payload, _ = _verify_access_token(token)
+    payload, _ = auth_service.verify_token(token) if auth_service else (None, None)
 
-    if payload and payload.get('sid'):
-        session_id = payload.get('sid')
-        revoked_sessions.add(session_id)
-        active_sessions.pop(session_id, None)
+    if auth_service and token:
+        auth_service.logout_user(token)
+
+    if payload:
         add_log('info', 'Auth', f'User "{payload.get("sub", "unknown")}" logged out')
 
     response = jsonify({'message': 'Logout successful'})
     response.delete_cookie('pp_auth_token')
     return response
+
+
+# ============== USER PROFILE ENDPOINTS ==============
+
+@app.route('/api/profile', methods=['GET'])
+@require_auth
+def api_get_profile():
+    """Get current user profile information."""
+    if not ENABLE_AUTH or not auth_service:
+        return jsonify({'error': 'Profile not available'}), 403
+
+    username = g.current_user
+    profile = auth_service.get_user_profile(username)
+    
+    if not profile:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify(profile)
+
+
+@app.route('/api/profile', methods=['PUT'])
+@require_auth
+def api_update_profile():
+    """Update current user profile."""
+    if not ENABLE_AUTH or not auth_service:
+        return jsonify({'error': 'Profile updates not available'}), 403
+
+    username = g.current_user
+    payload = request.get_json(silent=True) or {}
+    
+    # Only allow certain fields to be updated
+    allowed_updates = {
+        'device_info': payload.get('device_info'),
+        'preferences': payload.get('preferences'),
+        'email': payload.get('email'),
+    }
+    
+    # Remove None values
+    allowed_updates = {k: v for k, v in allowed_updates.items() if v is not None}
+    
+    success, message = auth_service.update_profile(username, allowed_updates)
+    
+    if not success:
+        return jsonify({'error': message}), 400
+    
+    logger.info(f'Profile updated for user {username}')
+    return jsonify({
+        'message': 'Profile updated successfully',
+        'user': auth_service.get_user_profile(username),
+    })
+
+
+@app.route('/api/profile/password', methods=['POST'])
+@require_auth
+def api_change_password():
+    """Change user password."""
+    if not ENABLE_AUTH or not auth_service:
+        return jsonify({'error': 'Password change not available'}), 403
+
+    username = g.current_user
+    payload = request.get_json(silent=True) or {}
+    old_password = payload.get('old_password') or ''
+    new_password = payload.get('new_password') or ''
+    new_password_confirm = payload.get('new_password_confirm') or ''
+
+    if not old_password or not new_password or not new_password_confirm:
+        return jsonify({'error': 'All password fields are required'}), 400
+
+    if new_password != new_password_confirm:
+        return jsonify({'error': 'New passwords do not match'}), 400
+
+    success, message = auth_service.change_password(username, old_password, new_password)
+    
+    if not success:
+        logger.warning(f'Failed password change for user {username}')
+        return jsonify({'error': message}), 400
+
+    logger.info(f'Password changed for user {username}')
+    return jsonify({'message': 'Password changed successfully'})
+
+
+@app.route('/api/profile/device-info', methods=['GET'])
+@require_auth
+def api_get_device_info():
+    """Get local device information."""
+    try:
+        import socket
+        import psutil
+        import uuid
+        import platform
+        
+        # Get MAC address
+        mac_address = uuid.uuid1().hex[:12]
+        try:
+            import subprocess
+            result = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=5)
+            for line in result.stdout.split('\n'):
+                if 'link/ether' in line:
+                    mac_address = line.split('link/ether')[1].split()[0]
+                    break
+        except:
+            pass
+        
+        # Get IP address
+        ip_address = socket.gethostbyname(socket.gethostname())
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip_address = s.getsockname()[0]
+            s.close()
+        except:
+            pass
+        
+        # Get system info
+        hostname = socket.gethostname()
+        cpu_count = psutil.cpu_count()
+        total_memory = psutil.virtual_memory().total
+        
+        return jsonify({
+            'mac_address': mac_address,
+            'ip_address': ip_address,
+            'hostname': hostname,
+            'cpu_count': cpu_count,
+            'total_memory': total_memory,
+            'os': platform.system(),
+        })
+    except Exception as e:
+        logger.error(f'Error getting device info: {str(e)}')
+        return jsonify({'error': 'Failed to retrieve device information'}), 500
+
 
 @app.route('/api/alerts', methods=['GET'])
 def get_alerts():
@@ -669,7 +897,8 @@ def get_alerts():
             db_alerts = db_service.get_alerts(limit=limit)
             return jsonify(db_alerts)
         else:
-            return jsonify(alerts)
+            with alerts_lock:
+                return jsonify(list(alerts))
     except Exception as e:
         logger.error(f"Error retrieving alerts: {str(e)}")
         return jsonify(alerts), 200
@@ -683,10 +912,17 @@ def get_security_alerts():
         if db_service and FEATURES['persistent_storage']:
             limit = request.args.get('limit', 100, type=int)
             all_alerts = db_service.get_alerts(limit=limit)
-            security_alerts = [a for a in all_alerts if a.get('type') in security_alert_types]
+            security_alerts = [
+                a for a in all_alerts
+                if (a.get('type') or a.get('alert_type')) in security_alert_types
+            ]
             return jsonify(security_alerts)
         else:
-            security_alerts = [a for a in alerts if a.get('type') in security_alert_types]
+            with alerts_lock:
+                security_alerts = [
+                    a for a in alerts
+                    if (a.get('type') or a.get('alert_type')) in security_alert_types
+                ]
             return jsonify(security_alerts)
     except Exception as e:
         logger.error(f"Error retrieving security alerts: {str(e)}")
@@ -698,7 +934,20 @@ def get_packets():
     try:
         if db_service and FEATURES['persistent_storage']:
             limit = request.args.get('limit', 1000, type=int)
-            db_packets = db_service.get_packets(limit=limit)
+            start_time = _parse_iso_datetime(request.args.get('start'))
+            end_time = _parse_iso_datetime(request.args.get('end'))
+            protocol = request.args.get('protocol')
+            src_ip = request.args.get('src_ip')
+            dst_ip = request.args.get('dst_ip')
+
+            db_packets = db_service.get_packets(
+                start_time=start_time,
+                end_time=end_time,
+                protocol=protocol,
+                src_ip=src_ip,
+                dst_ip=dst_ip,
+                limit=limit
+            )
             return jsonify(db_packets)
         else:
             limit = request.args.get('limit', 1000, type=int)
@@ -712,10 +961,11 @@ def get_devices():
     """Get network devices"""
     try:
         if sniffer:
-            devices = sniffer.get_devices()
+            devices = _collect_device_snapshot()
             if db_service and FEATURES['persistent_storage']:
                 db_devices = db_service.get_devices()
-                return jsonify(db_devices)
+                if db_devices:
+                    return jsonify(db_devices)
             return jsonify(devices)
         return jsonify([])
     except Exception as e:
@@ -738,7 +988,8 @@ def get_logs():
     """Get application logs"""
     try:
         limit = request.args.get('limit', 100, type=int)
-        return jsonify(logs[-limit:] if logs else [])
+        with logs_lock:
+            return jsonify(logs[-limit:] if logs else [])
     except Exception as e:
         logger.error(f"Error retrieving logs: {str(e)}")
         return jsonify([]), 200
@@ -749,26 +1000,36 @@ def generate_report():
     try:
         data = request.get_json()
         report_type = data.get('type', 'json')  # pdf, csv, json
-        
-        if sniffer and db_service and FEATURES['persistent_storage']:
+
+        packets = []
+        alerts_list = []
+        devices = []
+
+        if db_service and FEATURES['persistent_storage']:
             packets = db_service.get_packets(limit=10000)
             alerts_list = db_service.get_alerts(limit=1000)
             devices = db_service.get_devices()
-            
+        elif sniffer:
+            packets = list(sniffer.captured_packets[-10000:]) if sniffer.captured_packets else []
+            with alerts_lock:
+                alerts_list = [_normalize_alert(a) for a in alerts]
+            devices = _collect_device_snapshot()
+
+        if packets or alerts_list or devices:
             generator = get_report_generator()
-            
+
             if report_type == 'pdf':
                 filepath = generator.generate_pdf_report(packets, alerts_list)
                 if filepath:
                     return send_file(filepath, as_attachment=True,
                                    download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-            
+
             elif report_type == 'csv':
                 filepath = generator.generate_csv_report(packets, alerts_list)
                 if filepath:
                     return send_file(filepath, as_attachment=True,
                                    download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-            
+
             elif report_type == 'json':
                 filepath = generator.generate_json_report(packets, alerts_list, devices)
                 if filepath:
@@ -942,7 +1203,8 @@ def api_dismiss_alert(alert_id):
     """Dismiss a specific alert"""
     global alerts
     try:
-        alerts = [a for a in alerts if a.get('id') != alert_id]
+        with alerts_lock:
+            alerts = [a for a in alerts if a.get('id') != alert_id]
         if db_service:
             db_service.dismiss_alert(alert_id)
         return jsonify({'message': f'Alert {alert_id} dismissed'})
@@ -956,7 +1218,8 @@ def api_clear_alerts():
     global alerts, sniffer
     try:
         # Clear in-memory alerts
-        alerts.clear()
+        with alerts_lock:
+            alerts.clear()
         
         # Clear database alerts if persistent storage is enabled
         if db_service and FEATURES['persistent_storage']:
@@ -1268,12 +1531,19 @@ def api_system_info():
 @app.route('/api/health', methods=['GET'])
 def api_health():
     """Health check endpoint"""
+    db_status = None
+    if db_service:
+        try:
+            db_status = db_service.get_status()
+        except Exception:
+            db_status = {'ready': False}
+
     return jsonify({
         'status': 'healthy',
         'uptime': time.time() - start_time if 'start_time' in globals() else 0,
         'version': '2.0.0',
         'sniffing': sniffing_state['is_running'],
-        'database': db_service is not None,
+        'database': db_status or {'ready': False},
         'auth_enabled': ENABLE_AUTH,
     })
 
@@ -1284,7 +1554,7 @@ def api_analytics():
     """Get analytics data"""
     try:
         time_range = request.args.get('range', '24h')
-        
+
         if sniffer:
             stats = sniffer.get_statistics()
             return jsonify({
@@ -1302,6 +1572,27 @@ def api_analytics():
                 },
                 'time_range': time_range
             })
+
+        if db_service and FEATURES['persistent_storage']:
+            latest = db_service.get_traffic_stats(limit=1)
+            if latest:
+                row = latest[0]
+                return jsonify({
+                    'total_packets': row.get('total_packets', 0),
+                    'protocols': {
+                        'TCP': row.get('tcp_packets', 0),
+                        'UDP': row.get('udp_packets', 0),
+                        'ICMP': row.get('icmp_packets', 0),
+                        'Other': 0,
+                    },
+                    'bandwidth': {
+                        'current': row.get('current_bandwidth', 0),
+                        'peak': row.get('peak_bandwidth', 0),
+                        'average': row.get('average_bandwidth', 0),
+                    },
+                    'time_range': time_range,
+                })
+
         return jsonify({})
     except Exception as e:
         logger.error(f"Error getting analytics: {str(e)}")
@@ -1322,6 +1613,21 @@ def api_protocol_distribution():
                     {'name': 'Other', 'value': stats.get('otherPackets', 0), 'percentage': round(stats.get('otherPackets', 0) / total * 100, 2)},
                 ]
             })
+
+        if db_service and FEATURES['persistent_storage']:
+            latest = db_service.get_traffic_stats(limit=1)
+            if latest:
+                row = latest[0]
+                total = row.get('total_packets', 1) or 1
+                return jsonify({
+                    'distribution': [
+                        {'name': 'TCP', 'value': row.get('tcp_packets', 0), 'percentage': round(row.get('tcp_packets', 0) / total * 100, 2)},
+                        {'name': 'UDP', 'value': row.get('udp_packets', 0), 'percentage': round(row.get('udp_packets', 0) / total * 100, 2)},
+                        {'name': 'ICMP', 'value': row.get('icmp_packets', 0), 'percentage': round(row.get('icmp_packets', 0) / total * 100, 2)},
+                        {'name': 'Other', 'value': 0, 'percentage': 0},
+                    ]
+                })
+
         return jsonify({'distribution': []})
     except Exception as e:
         logger.error(f"Error getting protocol distribution: {str(e)}")
@@ -1332,10 +1638,21 @@ def api_top_talkers():
     """Get top talking devices"""
     try:
         limit = request.args.get('limit', 10, type=int)
-        if sniffer:
-            devices = sniffer.get_devices()
-            # Sort by packet count
-            sorted_devices = sorted(devices, key=lambda d: d.get('packets_in', 0) + d.get('packets_out', 0), reverse=True)
+        devices = []
+        if db_service and FEATURES['persistent_storage']:
+            devices = db_service.get_devices(limit=1000)
+        elif sniffer:
+            devices = _collect_device_snapshot()
+
+        if devices:
+            def _packets_total(device):
+                return (
+                    (device.get('packets_in') or device.get('packetsIn') or 0) +
+                    (device.get('packets_out') or device.get('packetsOut') or 0) +
+                    (device.get('packetsCaptured') or 0)
+                )
+
+            sorted_devices = sorted(devices, key=_packets_total, reverse=True)
             return jsonify(sorted_devices[:limit])
         return jsonify([])
     except Exception as e:
@@ -1347,13 +1664,16 @@ def api_bandwidth_history():
     """Get bandwidth history (placeholder - would need historical data storage)"""
     try:
         hours = request.args.get('hours', 24, type=int)
-        # Return current stats as a single data point for now
+        if db_service and FEATURES['persistent_storage']:
+            return jsonify(db_service.get_bandwidth_history(hours=hours))
+
         if sniffer:
             stats = sniffer.get_statistics()
             return jsonify([{
                 'timestamp': datetime.datetime.now().isoformat(),
                 'bandwidth': stats.get('currentBandwidth', 0)
             }])
+
         return jsonify([])
     except Exception as e:
         logger.error(f"Error getting bandwidth history: {str(e)}")
@@ -1374,6 +1694,11 @@ def api_traffic_stats():
                 'peak_bandwidth': stats.get('peakBandwidth', 0),
                 'average_bandwidth': stats.get('averageBandwidth', 0)
             })
+        if db_service and FEATURES['persistent_storage']:
+            latest = db_service.get_traffic_stats(limit=1)
+            if latest:
+                return jsonify(latest[0])
+
         return jsonify({})
     except Exception as e:
         logger.error(f"Error getting traffic stats: {str(e)}")
@@ -1405,8 +1730,9 @@ def handle_connect(auth=None):
             'auth_required': ENABLE_AUTH,
         })
         
-        if alerts:
-            emit('alerts_sync', alerts)
+        with alerts_lock:
+            if alerts:
+                emit('alerts_sync', list(alerts))
         
         if sniffer:
             emit('update_statistics', sniffer.get_statistics())
@@ -1415,24 +1741,27 @@ def handle_connect(auth=None):
         logger.error(f"Error in connect handler: {str(e)}")
 
 @socketio.on('disconnect')
-def handle_disconnect():
+def handle_disconnect(data=None):
     """Handle client disconnection"""
     logger.info("[Socket] Client disconnected")
 
 @socketio.on('get_logs')
-def handle_get_logs():
+def handle_get_logs(data=None):
     """Send logs to client"""
-    emit('logs_list', logs)
+    with logs_lock:
+        emit('logs_list', list(logs))
 
 @socketio.on('clear_logs')
-def handle_clear_logs():
+def handle_clear_logs(data=None):
     """Clear logs"""
-    logs.clear()
+    with logs_lock:
+        logs.clear()
     add_log('info', 'System', 'Logs cleared')
-    emit('logs_list', logs)
+    with logs_lock:
+        emit('logs_list', list(logs))
 
 @socketio.on('get_processor_stats')
-def handle_processor_stats():
+def handle_processor_stats(data=None):
     """Get packet processor statistics"""
     processor = get_packet_processor()
     emit('processor_stats', processor.get_stats())
@@ -1471,7 +1800,7 @@ def handle_start_sniffing(data=None):
         emit('sniffing_status', {'status': 'error', 'message': str(e)})
 
 @socketio.on('stop_sniffing')
-def handle_stop_sniffing():
+def handle_stop_sniffing(data=None):
     """Handle stop sniffing request from WebSocket"""
     global sniffer, sniffing_state
     
@@ -1490,7 +1819,7 @@ def handle_stop_sniffing():
         emit('sniffing_status', {'status': 'error', 'message': str(e)})
 
 @socketio.on('scan_devices')
-def handle_scan_devices():
+def handle_scan_devices(data=None):
     """Handle device scan request from WebSocket"""
     try:
         if sniffer:
@@ -1513,14 +1842,16 @@ def start_sniffing(interface: str):
         logger.info(f"[Capture] Starting packet capture on interface: {interface}")
         
         sniffer = PacketSniffer()
-        sniffer.set_callback(packet_callback)
         
         # Register packet processor callback if async is enabled
         if ASYNC_PROCESSING:
             processor = get_packet_processor()
             processor.register_callback(packet_callback)
             processor.start()
+            sniffer.set_callback(processor.put_packet)
             logger.info("[Processor] Async packet processor started")
+        else:
+            sniffer.set_callback(packet_callback)
         
         add_log('info', 'System', f"Starting packet capture on: {interface}")
         sniffer.start_sniffing(interface)
@@ -1552,19 +1883,22 @@ if __name__ == '__main__':
     logger.info(f"[Server] Async Processing: {ASYNC_PROCESSING}")
     logger.info(f"[Server] Capture interface: {interface}")
 
-    if ENABLE_AUTH and AUTH_USERNAME == 'admin' and AUTH_PASSWORD == 'admin123' and 'AUTH_PASSWORD_HASH' not in os.environ:
-        logger.warning('[Security] ENABLE_AUTH is on with default credentials. Set AUTH_USERNAME and AUTH_PASSWORD_HASH.')
+    if ENABLE_AUTH and JWT_SECRET.startswith('change'):
+        logger.warning('[Security] ENABLE_AUTH is on with default JWT_SECRET. Set JWT_SECRET in your environment.')
     
     add_log('info', 'System', "Packet Peeper backend starting")
     
     # Start sniffing in background thread
-    sniffing_thread = threading.Thread(
-        target=start_sniffing,
-        args=(interface,),
-        daemon=True,
-        name="PacketSnifferThread"
-    )
-    sniffing_thread.start()
+    if AUTO_START_SNIFFING:
+        sniffing_thread = threading.Thread(
+            target=start_sniffing,
+            args=(interface,),
+            daemon=True,
+            name="PacketSnifferThread"
+        )
+        sniffing_thread.start()
+    else:
+        logger.info("[Capture] Auto-start disabled; waiting for user to start capture.")
     
     # Start device update thread
     device_thread = threading.Thread(
@@ -1581,6 +1915,13 @@ if __name__ == '__main__':
         name="TrafficUpdateThread"
     )
     traffic_thread.start()
+
+    cleanup_thread = threading.Thread(
+        target=database_cleanup_loop,
+        daemon=True,
+        name="DatabaseCleanupThread"
+    )
+    cleanup_thread.start()
     
     # Start Flask-SocketIO server
     logger.info(f"[Server] Starting Flask server on {HOST}:{PORT}")

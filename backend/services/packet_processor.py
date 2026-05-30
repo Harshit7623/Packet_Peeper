@@ -40,6 +40,8 @@ class PacketProcessor:
     
     def register_callback(self, callback: Callable[[Dict], None]) -> None:
         """Register a callback to be called for each processed packet"""
+        if callback in self.callbacks:
+            return
         self.callbacks.append(callback)
         logger.info(f"[Callback] Registered callback: {callback.__name__}")
     

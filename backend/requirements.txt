@@ -31,3 +31,7 @@ requests==2.31.0
 
 # Environment variables
 python-dotenv==1.0.0
+
+# Authentication
+PyJWT==2.8.0
+bcrypt==4.1.3
