@@ -5,6 +5,8 @@ import { useMonitorStore } from "@/store/monitorStore";
 
 interface AuthUser {
   username: string;
+  email?: string;
+  role?: string;
 }
 
 interface AuthContextValue {
@@ -13,7 +15,8 @@ interface AuthContextValue {
   isLoading: boolean;
   user: AuthUser | null;
   error: string | null;
-  login: (username: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
+  register: (username: string, email: string, password: string, passwordConfirm: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   clearError: () => void;
@@ -63,20 +66,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
     void refreshStatus();
   }, [refreshStatus]);
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (identifier: string, password: string) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const result = await apiService.login(username, password);
+      const result = await apiService.login(identifier, password);
       setAuthEnabled(Boolean(result.auth_enabled));
       setIsAuthenticated(true);
-      setUser(result.user ?? { username });
+      setUser(result.user ?? { username: identifier });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Login failed. Please try again.";
       setError(message);
       setIsAuthenticated(false);
       setUser(null);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const register = useCallback(async (username: string, email: string, password: string, passwordConfirm: string) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      await apiService.register(username, email, password, passwordConfirm);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Registration failed. Please try again.";
+      setError(message);
       throw err;
     } finally {
       setIsLoading(false);
@@ -118,10 +136,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       error,
       login,
       logout,
+      register,
       refreshStatus,
       clearError,
     }),
-    [authEnabled, isAuthenticated, isLoading, user, error, login, logout, refreshStatus, clearError]
+    [authEnabled, isAuthenticated, isLoading, user, error, login, logout, register, refreshStatus, clearError]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

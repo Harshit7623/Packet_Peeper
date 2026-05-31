@@ -158,16 +158,21 @@ class ApiService {
 
   // ==================== Authentication ====================
 
-  async login(username: string, password: string) {
+  async login(identifier: string, password: string) {
+    const isEmail = identifier.includes('@');
+    const payload = isEmail
+      ? { email: identifier, password }
+      : { username: identifier, password };
+
     const result = await this.request<{
       message: string;
       token: string;
       expires_in: number;
-      user: { username: string };
+      user: { username: string; email?: string; role?: string };
       auth_enabled: boolean;
     }>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(payload),
     });
 
     if (result?.token) {
@@ -185,14 +190,73 @@ class ApiService {
     }
   }
 
+  async register(username: string, email: string, password: string, passwordConfirm: string) {
+    return this.request<{ message: string; user: { username: string; email?: string; role?: string } }>(
+      '/api/auth/register',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+          password_confirm: passwordConfirm,
+        }),
+      }
+    );
+  }
+
   async getAuthStatus() {
     return this.request<{
       auth_enabled: boolean;
       authenticated: boolean;
-      user?: { username: string };
+      user?: { username: string; email?: string; role?: string };
       expires_in?: number | null;
       error?: string;
     }>('/api/auth/status');
+  }
+
+  // ==================== Profile ====================
+
+  async getProfile() {
+    return this.request<{
+      username: string;
+      email?: string;
+      role?: string;
+      created_at?: string;
+      last_login?: string | null;
+      device_info?: Record<string, unknown>;
+      active_sessions?: Array<Record<string, unknown>>;
+      active_session_count?: number;
+    }>('/api/profile');
+  }
+
+  async updateProfile(updates: { email?: string; device_info?: Record<string, unknown>; preferences?: Record<string, unknown> }) {
+    return this.request<{ message: string; user: Record<string, unknown> }>('/api/profile', {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async changePassword(oldPassword: string, newPassword: string, newPasswordConfirm: string) {
+    return this.request<{ message: string }>('/api/profile/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+        new_password_confirm: newPasswordConfirm,
+      }),
+    });
+  }
+
+  async getDeviceInfo() {
+    return this.request<{
+      mac_address: string;
+      ip_address: string;
+      hostname: string;
+      cpu_count: number;
+      total_memory: number;
+      os: string;
+    }>('/api/profile/device-info');
   }
 
   // ==================== Packets ====================

@@ -21,6 +21,8 @@ import SystemStats from "@/pages/system";
 import Logs from "@/pages/logs";
 import Settings from "@/pages/settings";
 import Login from "@/pages/login";
+import Register from "@/pages/register";
+import Profile from "@/pages/profile";
 import ActionCenter from "@/pages/action-center";
 
 function LoadingScreen() {
@@ -43,12 +45,20 @@ function Router() {
   }
 
   if (authEnabled && !isAuthenticated) {
-    return <Login />;
+    return (
+      <Switch>
+        <Route path="/register" component={Register} />
+        <Route path="/login" component={Login} />
+        <Route component={Login} />
+      </Switch>
+    );
   }
 
   return (
     <Switch>
       <Route path="/login" component={Login} />
+      <Route path="/register" component={Register} />
+      <Route path="/profile" component={Profile} />
       <Route path="/" component={Dashboard} />
       <Route path="/action-center" component={ActionCenter} />
       <Route path="/packets" component={PacketMonitor} />

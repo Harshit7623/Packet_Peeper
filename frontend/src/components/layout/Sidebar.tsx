@@ -12,6 +12,7 @@ import {
   Settings, 
   ChevronLeft, 
   ChevronRight,
+  UserCircle,
   Eye,
   Terminal,
   Sparkles
@@ -30,6 +31,7 @@ const sidebarItems = [
   { icon: LineChart, label: "Insights", sub: "Deep Analytics", href: "/analytics" },
   { icon: Server, label: "System", sub: "Core Health", href: "/system" },
   { icon: FileText, label: "History", sub: "Event Stream", href: "/logs" },
+  { icon: UserCircle, label: "Profile", sub: "Operator ID", href: "/profile" },
   { icon: Settings, label: "Settings", sub: "Config", href: "/settings" },
 ];
 

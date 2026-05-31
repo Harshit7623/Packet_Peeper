@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { ShieldCheck, Lock, User, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 export default function Login() {
   const { authEnabled, isAuthenticated, isLoading, login, error, clearError } = useAuth();
   const [, setLocation] = useLocation();
-  const [username, setUsername] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -32,7 +32,7 @@ export default function Login() {
     setSubmitting(true);
 
     try {
-      await login(username.trim(), password);
+      await login(identifier.trim(), password);
       setLocation("/");
     } catch {
       // Errors handled by context state.
@@ -58,13 +58,13 @@ export default function Login() {
          <div className="rounded-2xl border border-border/60 bg-card/60 p-6 shadow-xl">
            <form className="space-y-5" onSubmit={handleSubmit}>
              <div className="space-y-2">
-               <label className="text-xs font-mono tracking-[0.3em] text-muted-foreground">USERNAME</label>
+               <label className="text-xs font-mono tracking-[0.3em] text-muted-foreground">USERNAME OR EMAIL</label>
                <div className="relative">
                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                  <Input
-                   value={username}
-                   onChange={(event) => setUsername(event.target.value)}
-                   placeholder="operator"
+                   value={identifier}
+                   onChange={(event) => setIdentifier(event.target.value)}
+                   placeholder="operator@company.com"
                    className="pl-10 h-11 bg-background/60"
                    disabled={submitting}
                    autoComplete="username"
@@ -94,7 +94,7 @@ export default function Login() {
                </div>
              )}
  
-             <Button type="submit" className="w-full h-11 rounded-xl" disabled={submitting || !username || !password}>
+             <Button type="submit" className="w-full h-11 rounded-xl" disabled={submitting || !identifier || !password}>
                {submitting ? (
                  <span className="flex items-center gap-2">
                    <Loader2 className="h-4 w-4 animate-spin" />
@@ -106,8 +106,13 @@ export default function Login() {
              </Button>
            </form>
  
-           <div className="mt-6 text-xs text-muted-foreground text-center">
-             Need access? Update credentials in your backend .env settings.
+           <div className="mt-6 text-xs text-muted-foreground text-center space-y-2">
+             <div>Need access? Update credentials in your backend .env settings.</div>
+             <div>
+               <Link href="/register" className="text-primary hover:text-primary/80">
+                 Create an operator account
+               </Link>
+             </div>
            </div>
          </div>
        </div>
