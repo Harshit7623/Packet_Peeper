@@ -14,6 +14,8 @@ export default function TrafficAnalysis() {
   const [timeRange, setTimeRange] = useState('7d');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [bandwidthHistory, setBandwidthHistory] = useState<Array<{ time: string; bandwidth: number }>>([]);
+  const [topTalkers, setTopTalkers] = useState<any[]>([]);
   
   const tcpPackets = stats?.tcpPackets || stats?.tcp || 0;
   const udpPackets = stats?.udpPackets || stats?.udp || 0;
@@ -41,10 +43,12 @@ export default function TrafficAnalysis() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const [statsResult, devicesResult, alertsResult] = await Promise.allSettled([
+      const [statsResult, devicesResult, alertsResult, bandwidthResult, talkersResult] = await Promise.allSettled([
         apiService.getStats(),
         apiService.getDevices(),
         apiService.getAlerts(),
+        apiService.getBandwidthHistory(timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : 720),
+        apiService.getTopTalkers(5),
       ]);
 
       if (statsResult.status === 'fulfilled') {
@@ -56,12 +60,52 @@ export default function TrafficAnalysis() {
       if (alertsResult.status === 'fulfilled') {
         setAlerts(alertsResult.value);
       }
+      if (bandwidthResult.status === 'fulfilled') {
+        const mapped = bandwidthResult.value.map((entry: any) => ({
+          time: new Date(entry.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
+          bandwidth: Math.round((entry.bandwidth || 0) / 1024 / 1024),
+        }));
+        setBandwidthHistory(mapped);
+      }
+      if (talkersResult.status === 'fulfilled') {
+        setTopTalkers(talkersResult.value || []);
+      }
     } catch (err) {
       console.error('Refresh failed:', err);
     } finally {
       setIsRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadHistory = async () => {
+      try {
+        const hours = timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : 720;
+        const [result, talkersResult] = await Promise.all([
+          apiService.getBandwidthHistory(hours),
+          apiService.getTopTalkers(5),
+        ]);
+        if (!isMounted) return;
+        const mapped = result.map((entry: any) => ({
+          time: new Date(entry.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
+          bandwidth: Math.round((entry.bandwidth || 0) / 1024 / 1024),
+        }));
+        setBandwidthHistory(mapped);
+        setTopTalkers(talkersResult || []);
+      } catch (err) {
+        console.error('Bandwidth history fetch failed:', err);
+        if (isMounted) {
+          setBandwidthHistory([]);
+        }
+      }
+    };
+
+    loadHistory();
+    return () => {
+      isMounted = false;
+    };
+  }, [timeRange]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -75,6 +119,9 @@ export default function TrafficAnalysis() {
   };
 
   const trafficTimeline = useMemo(() => {
+    if (bandwidthHistory.length > 0) {
+      return bandwidthHistory;
+    }
     if (packets.length === 0) return [];
 
     const now = Date.now();
@@ -132,7 +179,7 @@ export default function TrafficAnalysis() {
     });
 
     return buckets;
-  }, [devices, packets, timeRange]);
+  }, [bandwidthHistory, devices, packets, timeRange]);
 
   // Protocol distribution with real data
   const protocolData = useMemo(() => {
@@ -157,15 +204,16 @@ export default function TrafficAnalysis() {
 
   // Top connections (based on packets)
   const topConnections = useMemo(() => {
-    if (devices.length === 0) {
+    const source = topTalkers.length > 0 ? topTalkers : devices;
+    if (source.length === 0) {
       return [];
     }
-    return devices.slice(0, 5).map(d => ({
-      ip: d.hostname || d.ip_address,
-      packets: (Number(d.packets_in) || 0) + (Number(d.packets_out) || 0),
+    return source.slice(0, 5).map(d => ({
+      ip: d.hostname || d.ip_address || d.ipAddress || d.name,
+      packets: (Number(d.packets_in ?? d.packetsIn ?? 0) + Number(d.packets_out ?? d.packetsOut ?? 0) + Number(d.packetsCaptured ?? 0)),
       type: (d as any).type || 'device'
     }));
-  }, [devices]);
+  }, [devices, topTalkers]);
 
   return (
     <MainLayout>
@@ -312,8 +360,14 @@ export default function TrafficAnalysis() {
                   Traffic Flow
                 </CardTitle>
                 <div className="flex items-center gap-4 text-xs">
-                  <span className="flex items-center gap-1"><ArrowDown className="w-3 h-3 text-cyan-400" /> Inbound</span>
-                  <span className="flex items-center gap-1"><ArrowUp className="w-3 h-3 text-orange-400" /> Outbound</span>
+                  {trafficTimeline.length > 0 && (trafficTimeline[0] as any).bandwidth !== undefined ? (
+                    <span className="flex items-center gap-1"><Wifi className="w-3 h-3 text-cyan-400" /> Bandwidth</span>
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1"><ArrowDown className="w-3 h-3 text-cyan-400" /> Inbound</span>
+                      <span className="flex items-center gap-1"><ArrowUp className="w-3 h-3 text-orange-400" /> Outbound</span>
+                    </>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className="h-75">
@@ -340,10 +394,21 @@ export default function TrafficAnalysis() {
                       <YAxis hide />
                       <Tooltip 
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px' }}
-                        formatter={(value: number) => [value.toLocaleString() + ' packets', '']}
+                        formatter={(value: number) => {
+                          if ((trafficTimeline[0] as any)?.bandwidth !== undefined) {
+                            return [`${value.toLocaleString()} MB/s`, ''];
+                          }
+                          return [value.toLocaleString() + ' packets', ''];
+                        }}
                       />
-                      <Area type="monotone" dataKey="inbound" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
-                      <Area type="monotone" dataKey="outbound" stroke="#ff6b35" strokeWidth={2} fillOpacity={1} fill="url(#colorOutbound)" />
+                      {(trafficTimeline[0] as any)?.bandwidth !== undefined ? (
+                        <Area type="monotone" dataKey="bandwidth" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
+                      ) : (
+                        <>
+                          <Area type="monotone" dataKey="inbound" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
+                          <Area type="monotone" dataKey="outbound" stroke="#ff6b35" strokeWidth={2} fillOpacity={1} fill="url(#colorOutbound)" />
+                        </>
+                      )}
                     </AreaChart>
                   </ResponsiveContainer>
                 )}

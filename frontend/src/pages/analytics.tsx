@@ -3,12 +3,67 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Info, ShieldCheck, Users, TrendingUp, BarChart3, Activity } from "lucide-react";
 import { useMonitorStore } from "@/store/monitorStore";
 import { motion } from "framer-motion";
+import { apiService } from "@/services/apiService";
+import { useEffect, useMemo, useState } from "react";
 
 export default function Analytics() {
   const { devices, alerts, stats } = useMonitorStore();
+  const [topTalkers, setTopTalkers] = useState<any[]>([]);
+  const [analyticsData, setAnalyticsData] = useState<any | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   
-  const totalPackets = stats?.totalPackets || stats?.total_packets || 0;
+  const totalPackets = analyticsData?.total_packets || stats?.totalPackets || stats?.total_packets || 0;
   const blockedCount = alerts.filter(a => a.severity === 'critical' || a.severity === 'high').length;
+
+  const talkerRows = useMemo(() => {
+    const source = topTalkers.length > 0 ? topTalkers : devices;
+    return source.slice(0, 3).map((device, i) => {
+      const packetsIn = Number(device.packets_in ?? device.packetsIn ?? 0);
+      const packetsOut = Number(device.packets_out ?? device.packetsOut ?? 0);
+      const packetsCaptured = Number(device.packetsCaptured ?? 0);
+      const totalPacketsDevice = packetsIn + packetsOut + packetsCaptured;
+
+      return {
+        key: `${device.ip_address || device.ipAddress || device.name || i}`,
+        label: device.hostname || device.ip_address || device.ipAddress || device.name,
+        totalPackets: totalPacketsDevice,
+        rank: i,
+      };
+    });
+  }, [devices, topTalkers]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadAnalytics = async () => {
+      setIsLoading(true);
+      try {
+        const [talkersResult, analyticsResult] = await Promise.allSettled([
+          apiService.getTopTalkers(3),
+          apiService.getAnalytics('24h'),
+        ]);
+
+        if (!isMounted) return;
+
+        if (talkersResult.status === 'fulfilled') {
+          setTopTalkers(talkersResult.value || []);
+        }
+        if (analyticsResult.status === 'fulfilled') {
+          setAnalyticsData(analyticsResult.value || null);
+        }
+      } catch (err) {
+        console.error('Analytics fetch failed:', err);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadAnalytics();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <MainLayout>
@@ -43,18 +98,13 @@ export default function Analytics() {
               </CardHeader>
               <CardContent className="p-6">
                 <div className="space-y-6">
-                  {devices.length > 0 ? devices.slice(0, 3).map((device, i) => {
-                    const packetsIn = Number(device.packets_in) || 0;
-                    const packetsOut = Number(device.packets_out) || 0;
-                    const totalPacketsDevice = packetsIn + packetsOut;
-                    
-                    return (
+                  {talkerRows.length > 0 ? talkerRows.map((device) => (
                     <motion.div 
-                      key={i} 
+                      key={device.key} 
                       className="flex items-center justify-between group cursor-pointer p-3 rounded-xl hover:bg-muted/30 transition-all"
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.2 + i * 0.1 }}
+                      transition={{ delay: 0.2 + device.rank * 0.1 }}
                       whileHover={{ x: 5 }}
                     >
                       <div className="flex items-center gap-4">
@@ -62,21 +112,23 @@ export default function Analytics() {
                           className="text-2xl"
                           whileHover={{ scale: 1.2, rotate: 10 }}
                         >
-                          {i === 0 ? '🖥️' : i === 1 ? '💻' : '📱'}
+                          {device.rank === 0 ? '🖥️' : device.rank === 1 ? '💻' : '📱'}
                         </motion.span>
                         <div>
-                          <p className="font-bold text-foreground group-hover:text-primary transition-colors">{device.hostname || device.ip_address}</p>
+                          <p className="font-bold text-foreground group-hover:text-primary transition-colors">{device.label}</p>
                           <p className="text-xs text-muted-foreground">Total packets this session</p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-bold text-foreground">{totalPacketsDevice > 0 ? totalPacketsDevice.toLocaleString() : 'Active'}</p>
-                        <p className="text-[10px] font-bold text-primary">{totalPacketsDevice > 0 ? 'packets' : 'device'}</p>
+                        <p className="font-bold text-foreground">{device.totalPackets > 0 ? device.totalPackets.toLocaleString() : 'Active'}</p>
+                        <p className="text-[10px] font-bold text-primary">{device.totalPackets > 0 ? 'packets' : 'device'}</p>
                       </div>
                     </motion.div>
-                  )}) : (
+                  )) : (
                     <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center">
-                      <p className="text-sm font-semibold text-foreground">No device traffic yet</p>
+                      <p className="text-sm font-semibold text-foreground">
+                        {isLoading ? 'Loading devices...' : 'No device traffic yet'}
+                      </p>
                       <p className="text-xs text-muted-foreground mt-2">
                         Start packet capture to see top data users in real time.
                       </p>
