@@ -5,6 +5,7 @@
 
 const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog, nativeImage } = require('electron');
 const { spawn, exec } = require('child_process');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -40,6 +41,71 @@ const getBackendPath = () => {
     return path.join(__dirname, '..', '..', 'backend');
   }
   return path.join(process.resourcesPath, 'backend');
+};
+
+const getBackendBinaryName = () => {
+  return process.platform === 'win32' ? 'packet_peeper_backend.exe' : 'packet_peeper_backend';
+};
+
+const getBackendBinaryPath = () => {
+  return path.join(getBackendPath(), getBackendBinaryName());
+};
+
+const getPythonPath = () => {
+  return process.env.PACKET_PEEPER_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
+};
+
+const getJwtSecret = () => {
+  let secret = store.get('jwtSecret');
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString('hex');
+    store.set('jwtSecret', secret);
+  }
+  return secret;
+};
+
+const buildBackendEnv = () => {
+  const baseEnv = {
+    ...process.env,
+    FLASK_PORT: BACKEND_PORT.toString(),
+    PYTHONUNBUFFERED: '1',
+    PACKET_PEEPER_DESKTOP: 'True',
+    FEATURE_ELECTRON_DESKTOP: 'True',
+    DB_ENGINE: 'sqlite',
+    ENABLE_AUTH: 'True',
+    JWT_SECRET: getJwtSecret(),
+  };
+
+  if (!isDev) {
+    baseEnv.FLASK_ENV = 'production';
+    baseEnv.FLASK_DEBUG = 'False';
+  }
+
+  return baseEnv;
+};
+
+const resolveBackendCommand = (interface_) => {
+  const overridePath = process.env.PACKET_PEEPER_BACKEND_PATH;
+  if (overridePath && fs.existsSync(overridePath)) {
+    return { command: overridePath, args: [interface_], usesPython: false };
+  }
+
+  const binaryPath = getBackendBinaryPath();
+  if (fs.existsSync(binaryPath)) {
+    return { command: binaryPath, args: [interface_], usesPython: false };
+  }
+
+  return { command: getPythonPath(), args: ['app.py', interface_], usesPython: true };
+};
+
+const isElevated = () => {
+  if (process.platform === 'win32') {
+    return true;
+  }
+  if (typeof process.getuid !== 'function') {
+    return false;
+  }
+  return process.getuid() === 0;
 };
 
 const getFrontendPath = () => {
@@ -138,31 +204,26 @@ function createWindow() {
 function startBackend() {
   return new Promise((resolve, reject) => {
     const backendPath = getBackendPath();
-    const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
     const interface_ = store.get('selectedInterface');
+    const backendCommand = resolveBackendCommand(interface_);
     
     console.log(`Starting Python backend at: ${backendPath}`);
     console.log(`Interface: ${interface_}`);
+    console.log(`Backend command: ${backendCommand.command}`);
+
+    if (!isElevated()) {
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'Administrator Permissions Required',
+        message: 'Packet capture requires elevated permissions or netcap capabilities.',
+        detail: 'Run Packet Peeper as Administrator/root or grant packet-capture capabilities to the backend binary.'
+      });
+    }
     
-    // Check if Python is available
-    exec(`${pythonPath} --version`, (error) => {
-      if (error) {
-        dialog.showErrorBox(
-          'Python Not Found',
-          'Python is required to run Packet Peeper. Please install Python 3.8 or higher.'
-        );
-        reject(new Error('Python not found'));
-        return;
-      }
-      
-      // Start the Python backend
-      pythonProcess = spawn(pythonPath, ['app.py', interface_], {
+    const launchBackend = () => {
+      pythonProcess = spawn(backendCommand.command, backendCommand.args, {
         cwd: backendPath,
-        env: {
-          ...process.env,
-          FLASK_PORT: BACKEND_PORT.toString(),
-          PYTHONUNBUFFERED: '1'
-        },
+        env: buildBackendEnv(),
         stdio: ['ignore', 'pipe', 'pipe']
       });
       
@@ -200,7 +261,25 @@ function startBackend() {
       setTimeout(() => {
         resolve(); // Resolve anyway after timeout
       }, 10000);
-    });
+    };
+
+    if (backendCommand.usesPython) {
+      // Check if Python is available
+      exec(`${backendCommand.command} --version`, (error) => {
+        if (error) {
+          dialog.showErrorBox(
+            'Python Not Found',
+            'Python is required to run Packet Peeper in development mode. Please install Python 3.8 or higher.'
+          );
+          reject(new Error('Python not found'));
+          return;
+        }
+        launchBackend();
+      });
+      return;
+    }
+
+    launchBackend();
   });
 }
 

@@ -15,6 +15,12 @@
 git clone https://github.com/yourusername/packet-peeper.git
 cd packet-peeper/desktop/electron
 
+# Build the backend binary (one-time per release)
+cd ../../backend/packaging
+pip install -r requirements-build.txt
+build_backend.bat
+cd ../../desktop/electron
+
 # Install Electron dependencies
 npm install
 
@@ -43,6 +49,11 @@ The installer will be created in `dist/` directory as `Packet Peeper Setup 1.0.0
 ### Building
 
 ```bash
+npm run build:frontend
+cd ../../backend/packaging
+pip install -r requirements-build.txt
+./build_backend.sh
+cd ../../desktop/electron
 npm run build:mac
 ```
 
@@ -55,6 +66,11 @@ npm run build:mac
 ### Building
 
 ```bash
+npm run build:frontend
+cd ../../backend/packaging
+pip install -r requirements-build.txt
+./build_backend.sh
+cd ../../desktop/electron
 npm run build:linux
 ```
 
@@ -105,6 +121,12 @@ Updates check on app startup and can be manually triggered.
 - Ensure Python 3.8+ is installed and in your PATH
 - Check Windows Defender or antivirus isn't blocking Python
 - Try running as Administrator
+
+### Packet capture permission errors (Linux/macOS)
+- Run the app with elevated permissions, or grant capabilities to the backend binary:
+   ```bash
+   sudo setcap cap_net_raw,cap_net_admin=eip "backend/packet_peeper_backend"
+   ```
 
 ### No network interfaces detected
 - On Windows, you may need to run as Administrator

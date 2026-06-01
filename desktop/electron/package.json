@@ -53,6 +53,11 @@
     ],
     "extraResources": [
       {
+        "from": "../../backend/dist",
+        "to": "backend",
+        "filter": ["**/*"]
+      },
+      {
         "from": "../../",
         "to": "backend",
         "filter": [
