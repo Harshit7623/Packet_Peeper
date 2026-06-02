@@ -382,6 +382,75 @@ class ApiService {
     return this.request<{ status: string; uptime?: number; version?: string }>('/api/health');
   }
 
+  async getSystemHealth() {
+    return this.request<{
+      cpu: {
+        percent: number;
+        per_core: number[];
+        cores: number;
+        physical_cores: number;
+        frequency: { current: number; min: number; max: number };
+        load_average: number[];
+      };
+      memory: {
+        total: number;
+        available: number;
+        used: number;
+        percent: number;
+        swap_total: number;
+        swap_used: number;
+        swap_percent: number;
+      };
+      disk: {
+        total: number;
+        used: number;
+        free: number;
+        percent: number;
+      };
+      network: {
+        bytes_sent: number;
+        bytes_recv: number;
+        packets_sent: number;
+        packets_recv: number;
+        errin: number;
+        errout: number;
+        dropin: number;
+        dropout: number;
+      };
+      process: {
+        memory_rss: number;
+        memory_vms: number;
+        cpu_percent: number;
+        threads: number;
+      };
+      processing: {
+        queue_size: number;
+        packets_captured: number;
+        alerts_count: number;
+        devices_count: number;
+      };
+      uptime: number;
+      platform: string;
+    }>('/api/system/health');
+  }
+
+  async getTrafficFlow(minutes: number = 30, buckets: number = 30) {
+    return this.request<{
+      flow: Array<{
+        timestamp: string;
+        time_label: string;
+        tcp: number;
+        udp: number;
+        icmp: number;
+        other: number;
+        total: number;
+        bytes: number;
+      }>;
+      minutes: number;
+      bucket_count: number;
+    }>(`/api/traffic/flow?minutes=${minutes}&buckets=${buckets}`);
+  }
+
   // ==================== Analytics ====================
 
   async getAnalytics(timeRange: string = '24h') {

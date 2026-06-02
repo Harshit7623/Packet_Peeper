@@ -142,7 +142,7 @@ class NetworkSecurityMonitor:
         self.packet_rate = defaultdict(lambda: {'timestamps': [], 'bytes': 0})
         
         # Per-destination flood detection
-        self.dst_packet_rate = defaultdict(lambda: {'sources': set(), 'timestamps': [], 'bytes': 0})
+        self.dst_packet_rate = defaultdict(lambda: {'sources': {}, 'timestamps': [], 'bytes': 0})
         
         # DNS tracking
         self.dns_queries = defaultdict(list)
@@ -526,10 +526,21 @@ class NetworkSecurityMonitor:
         tracker = self.dst_packet_rate[dst_ip]
         window = self.thresholds['ddos_window']
         
+        # Initialize as dict if it's a set (legacy compatibility)
+        if isinstance(tracker.get('sources'), set):
+            tracker['sources'] = {}
+            
         # Clean old entries
         tracker['timestamps'] = [t for t in tracker['timestamps'] if timestamp - t < window]
         tracker['timestamps'].append(timestamp)
-        tracker['sources'].add(src_ip)
+        
+        # Add source with timestamp
+        tracker['sources'][src_ip] = timestamp
+        
+        # Prune old sources
+        old_sources = [ip for ip, t in tracker['sources'].items() if timestamp - t > window]
+        for ip in old_sources:
+            del tracker['sources'][ip]
         
         # Check for DDoS pattern
         unique_sources = len(tracker['sources'])
@@ -538,8 +549,8 @@ class NetworkSecurityMonitor:
             logger.warning(f"[ALERT] DDoS detected on {dst_ip} from {unique_sources} sources")
             
             # Reset tracker
-            sources_list = list(tracker['sources'])[:10]
-            self.dst_packet_rate[dst_ip] = {'sources': set(), 'timestamps': [], 'bytes': 0}
+            sources_list = list(tracker['sources'].keys())[:10]
+            self.dst_packet_rate[dst_ip] = {'sources': {}, 'timestamps': [], 'bytes': 0}
             
             return self._create_alert(
                 title='DDoS Attack Detected',
@@ -882,8 +893,7 @@ class NetworkSecurityMonitor:
                     
                     # Check for regular beaconing (low variance)
                     regularity = std_dev / mean_interval if mean_interval > 0 else 1
-                    
-                    if regularity < self.thresholds['beacon_regularity'] and mean_interval > 1:
+                    if regularity < self.thresholds['beacon_regularity'] and mean_interval > 60:
                         logger.warning(f"[ALERT] C2 beacon detected: {src_ip} -> {dst_ip}")
                         self.beacon_tracker[key] = []  # Reset
                         

@@ -4,7 +4,8 @@ from pathlib import Path
 
 block_cipher = None
 
-backend_root = Path(__file__).resolve().parents[1]
+import os
+backend_root = Path(SPECPATH).resolve().parent
 app_path = backend_root / "app.py"
 
 analysis = Analysis(
@@ -15,7 +16,11 @@ analysis = Analysis(
         (str(backend_root / "config"), "config"),
         (str(backend_root / "templates"), "templates"),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        "engineio.async_drivers.threading",
+        "engineio.async_drivers.eventlet",
+        "engineio.async_drivers.gevent",
+    ],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

@@ -43,6 +43,7 @@ from config.config import (
     PACKET_HASH_MAX_BYTES,
     ENABLE_VENDOR_LOOKUP,
     BPF_FILTER,
+    LOGS_DIR,
 )
 
 # ---------------- Default BPF Filter ---------------- #
@@ -53,10 +54,10 @@ DEFAULT_BPF = BPF_FILTER or (
 )
 
 # ---------------- Logging ---------------- #
-if not os.path.exists("logs"):
-    os.makedirs("logs")
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR, exist_ok=True)
 
-log_file = os.path.join("logs", "classification.log")
+log_file = os.path.join(LOGS_DIR, "classification.log")
 logging.basicConfig(
     level=logging.DEBUG if CAPTURE_DEBUG else logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -368,6 +369,7 @@ class PacketSniffer:
         self.security_monitor = NetworkSecurityMonitor()  # Initialize security monitor
         self.security_alerts = []  # Store detected cyberattack events
         self.local_network = None  # Will store the local network CIDR
+        self._running = False  # Flag used by stop_sniffing() to gracefully end capture
         # --- Bandwidth and protocol tracking ---
         self.bandwidth_history = []  # [(timestamp, bytes)]
         self.peak_bandwidth = 0
@@ -644,6 +646,11 @@ class PacketSniffer:
         """Register a callback for packet capture events."""
         self.callback = callback
 
+    def stop_sniffing(self):
+        """Stop packet capture gracefully by setting the _running flag to False."""
+        self._running = False
+        logger.info("[Capture] Stop requested – capture will end after current packet")
+
     def categorize_packet(self, packet_info):
         """Add packet_info to the category list based on its service."""
         service = packet_info.get('service', 'Unknown').lower()
@@ -746,17 +753,20 @@ class PacketSniffer:
             # Track the current time for rate limiting
             now = time.time()
 
-            # Enhanced IP layer handling
-            if IP in packet:
-                ip_layer = packet[IP]
+            if packet.haslayer('IP'):
+                ip_layer = packet['IP']
                 packet_info["src_ip"] = ip_layer.src
                 packet_info["dst_ip"] = ip_layer.dst
-                _debug_log(f"Captured packet with IPs: {ip_layer.src} -> {ip_layer.dst}")
-            if packet.haslayer(IP):
-                ip_layer = packet[IP]
-                packet_info["src_ip"] = ip_layer.src
-                packet_info["dst_ip"] = ip_layer.dst
-            if packet.haslayer(TCP):
+            elif packet.haslayer('IPv6'):
+                ipv6_layer = packet['IPv6']
+                packet_info["src_ip"] = ipv6_layer.src
+                packet_info["dst_ip"] = ipv6_layer.dst
+            elif packet.haslayer('Ether'):
+                ether = packet['Ether']
+                packet_info["src_ip"] = ether.src
+                packet_info["dst_ip"] = ether.dst
+                
+            if packet.haslayer('TCP'):
                 tcp = packet[TCP]
                 packet_info["protocol"] = "TCP"
                 packet_info["src_port"] = tcp.sport
@@ -927,6 +937,7 @@ class PacketSniffer:
     def start_sniffing(self, interface="auto", bpf=None):
         import traceback
         bpf = bpf or DEFAULT_BPF
+        self._running = True
         logger.info(f"Starting sniffing on {interface} with filter: {bpf}")
         
         # Set Scapy configurations for better packet capture
@@ -977,21 +988,28 @@ class PacketSniffer:
         # Start the actual sniffing with auto-restart on failure
         retry_count = 0
         max_retries = 5
-        while retry_count < max_retries:
+        while retry_count < max_retries and self._running:
             try:
                 sniff(iface=actual_interface, 
                       prn=self.handle_packet, 
                       store=0, 
-                      filter=bpf)
+                      filter=bpf,
+                      stop_filter=lambda _pkt: not self._running)
+                # If sniff() returns because _running became False, exit cleanly
+                if not self._running:
+                    logger.info("Sniffing stopped gracefully via stop_sniffing()")
+                    break
                 # If sniff() returns normally, log and restart
                 logger.warning("Sniff loop exited normally, restarting...")
                 retry_count += 1
                 time.sleep(1)
             except KeyboardInterrupt:
                 logger.info("Sniffing stopped by user")
+                self._running = False
                 break
             except PermissionError as e:
                 logger.error(f"Packet capture permission error on {actual_interface}: {str(e)}")
+                self._running = False
                 raise
             except Exception as e:
                 logger.error(f"Packet capture error: {str(e)}")

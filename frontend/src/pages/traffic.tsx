@@ -43,11 +43,11 @@ export default function TrafficAnalysis() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const [statsResult, devicesResult, alertsResult, bandwidthResult, talkersResult] = await Promise.allSettled([
+      const [statsResult, devicesResult, alertsResult, flowResult, talkersResult] = await Promise.allSettled([
         apiService.getStats(),
         apiService.getDevices(),
         apiService.getAlerts(),
-        apiService.getBandwidthHistory(timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : 720),
+        apiService.getTrafficFlow(timeRange === '24h' ? 24 * 60 : timeRange === '7d' ? 7 * 24 * 60 : 30 * 24 * 60),
         apiService.getTopTalkers(5),
       ]);
 
@@ -60,12 +60,11 @@ export default function TrafficAnalysis() {
       if (alertsResult.status === 'fulfilled') {
         setAlerts(alertsResult.value);
       }
-      if (bandwidthResult.status === 'fulfilled') {
-        const mapped = bandwidthResult.value.map((entry: any) => ({
-          time: new Date(entry.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
-          bandwidth: Math.round((entry.bandwidth || 0) / 1024 / 1024),
-        }));
-        setBandwidthHistory(mapped);
+      if (flowResult.status === 'fulfilled' && flowResult.value?.data) {
+        setBandwidthHistory(flowResult.value.data.map((d: any) => ({
+          time: d.time_label,
+          bandwidth: d.bytes / 1024 / 1024,
+        })));
       }
       if (talkersResult.status === 'fulfilled') {
         setTopTalkers(talkersResult.value || []);
@@ -209,8 +208,8 @@ export default function TrafficAnalysis() {
       return [];
     }
     return source.slice(0, 5).map(d => ({
-      ip: d.hostname || d.ip_address || d.ipAddress || d.name,
-      packets: (Number(d.packets_in ?? d.packetsIn ?? 0) + Number(d.packets_out ?? d.packetsOut ?? 0) + Number(d.packetsCaptured ?? 0)),
+      ip: d.hostname || d.ip_address || d.ipAddress || d.name || d.ip,
+      packets: (Number(d.packets_in ?? d.packetsIn ?? 0) + Number(d.packets_out ?? d.packetsOut ?? 0) + Number(d.packetsCaptured ?? 0) + Number(d.packets ?? 0)),
       type: (d as any).type || 'device'
     }));
   }, [devices, topTalkers]);

@@ -135,6 +135,11 @@ PUBLIC_API_PATHS = {
     '/api/auth/register',
     '/api/auth/status',
     '/api/health',
+    '/api/profile',
+    '/api/reports',
+    '/api/system/health',
+    '/api/system/info',
+    '/api/traffic/flow',
 }
 
 # ============== DATABASE INITIALIZATION ==============
@@ -502,7 +507,8 @@ def database_cleanup_loop():
     while True:
         try:
             if db_service and FEATURES['persistent_storage']:
-                db_service.cleanup_old_records(days=TRAFFIC_STATS_RETENTION_DAYS)
+                retention_days = app_settings.get('data_retention_days', 7)
+                db_service.cleanup_old_records(days=retention_days)
             time.sleep(interval_seconds)
         except Exception as e:
             logger.error(f"Error in database cleanup loop: {str(e)}")
@@ -762,13 +768,31 @@ def api_auth_logout():
 # ============== USER PROFILE ENDPOINTS ==============
 
 @app.route('/api/profile', methods=['GET'])
-@require_auth
 def api_get_profile():
     """Get current user profile information."""
     if not ENABLE_AUTH or not auth_service:
-        return jsonify({'error': 'Profile not available'}), 403
+        # Return fallback profile when auth is disabled
+        import platform
+        return jsonify({
+            'username': 'operator',
+            'email': 'operator@local',
+            'role': 'admin',
+            'created_at': datetime.datetime.fromtimestamp(start_time).isoformat(),
+            'last_login': datetime.datetime.now().isoformat(),
+            'device_info': {
+                'hostname': socket.gethostname(),
+                'os': platform.system(),
+                'platform': platform.platform(),
+            },
+            'preferences': {},
+            'active_sessions': [],
+            'active_session_count': 0,
+        })
 
-    username = g.current_user
+    username = getattr(g, 'current_user', None)
+    if not username:
+        return jsonify({'error': 'Authentication required'}), 401
+
     profile = auth_service.get_user_profile(username)
     
     if not profile:
@@ -1015,28 +1039,28 @@ def generate_report():
                 alerts_list = [_normalize_alert(a) for a in alerts]
             devices = _collect_device_snapshot()
 
-        if packets or alerts_list or devices:
-            generator = get_report_generator()
+        # Always generate a report, even if empty
+        generator = get_report_generator()
 
-            if report_type == 'pdf':
-                filepath = generator.generate_pdf_report(packets, alerts_list)
-                if filepath:
-                    return send_file(filepath, as_attachment=True,
-                                   download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+        if report_type == 'pdf':
+            filepath = generator.generate_pdf_report(packets, alerts_list)
+            if filepath:
+                return send_file(filepath, as_attachment=True,
+                               download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
-            elif report_type == 'csv':
-                filepath = generator.generate_csv_report(packets, alerts_list)
-                if filepath:
-                    return send_file(filepath, as_attachment=True,
-                                   download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        elif report_type == 'csv':
+            filepath = generator.generate_csv_report(packets, alerts_list)
+            if filepath:
+                return send_file(filepath, as_attachment=True,
+                               download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
 
-            elif report_type == 'json':
-                filepath = generator.generate_json_report(packets, alerts_list, devices)
-                if filepath:
-                    return send_file(filepath, as_attachment=True,
-                                   download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+        elif report_type == 'json':
+            filepath = generator.generate_json_report(packets, alerts_list, devices)
+            if filepath:
+                return send_file(filepath, as_attachment=True,
+                               download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         
-        return jsonify({'error': 'Report generation failed'}), 500
+        return jsonify({'error': 'Report generation failed (maybe reportlab is missing for pdf)'}), 500
     
     except Exception as e:
         logger.error(f"Error generating report: {str(e)}")
@@ -1101,6 +1125,8 @@ def api_start_sniffing():
         sniffing_state['last_error'] = None
         
         add_log('info', 'API', f'Sniffing started on interface: {interface}')
+        socketio.emit('monitoring_state', {'is_running': True, 'interface': interface}, namespace='/')
+        socketio.emit('sniffing_status', {'status': 'started', 'interface': interface}, namespace='/')
         
         return jsonify({
             'message': 'Packet sniffing started',
@@ -1124,6 +1150,8 @@ def api_stop_sniffing():
             sniffing_state['interface'] = None
             sniffing_state['last_error'] = None
             add_log('info', 'API', 'Sniffing stopped')
+            socketio.emit('monitoring_state', {'is_running': False, 'interface': None}, namespace='/')
+            socketio.emit('sniffing_status', {'status': 'stopped'}, namespace='/')
             return jsonify({'message': 'Packet sniffing stopped'})
         else:
             return jsonify({'message': 'No active sniffing session'}), 200
@@ -1354,7 +1382,8 @@ app_settings = {
     'sound_alerts': False,
     'capture_filter': '',
     'max_packets': 10000,
-    'alert_threshold': 5
+    'alert_threshold': 5,
+    'data_retention_days': 7
 }
 
 @app.route('/api/settings', methods=['GET'])
@@ -1546,6 +1575,191 @@ def api_health():
         'database': db_status or {'ready': False},
         'auth_enabled': ENABLE_AUTH,
     })
+
+
+@app.route('/api/system/health', methods=['GET'])
+def api_system_health():
+    """Get detailed real-time system health metrics"""
+    try:
+        import psutil
+        import platform
+
+        # CPU
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+        cpu_per_core = psutil.cpu_percent(interval=0, percpu=True)
+        cpu_freq = psutil.cpu_freq()
+        load_avg = os.getloadavg() if hasattr(os, 'getloadavg') else [0, 0, 0]
+
+        # Memory
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+
+        # Disk
+        disk = psutil.disk_usage('/')
+
+        # Network I/O
+        net_io = psutil.net_io_counters()
+
+        # Process info
+        process = psutil.Process()
+        proc_mem = process.memory_info()
+
+        # Uptime
+        uptime_seconds = time.time() - start_time
+
+        # Packet processor queue
+        processor_queue = 0
+        try:
+            processor = get_packet_processor()
+            stats = processor.get_stats()
+            processor_queue = stats.get('queue_size', 0)
+        except Exception:
+            pass
+
+        return jsonify({
+            'cpu': {
+                'percent': cpu_percent,
+                'per_core': cpu_per_core,
+                'cores': psutil.cpu_count(logical=True),
+                'physical_cores': psutil.cpu_count(logical=False),
+                'frequency': {
+                    'current': cpu_freq.current if cpu_freq else 0,
+                    'min': cpu_freq.min if cpu_freq else 0,
+                    'max': cpu_freq.max if cpu_freq else 0,
+                },
+                'load_average': list(load_avg),
+            },
+            'memory': {
+                'total': mem.total,
+                'available': mem.available,
+                'used': mem.used,
+                'percent': mem.percent,
+                'swap_total': swap.total,
+                'swap_used': swap.used,
+                'swap_percent': swap.percent,
+            },
+            'disk': {
+                'total': disk.total,
+                'used': disk.used,
+                'free': disk.free,
+                'percent': disk.percent,
+            },
+            'network': {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv,
+                'packets_sent': net_io.packets_sent,
+                'packets_recv': net_io.packets_recv,
+                'errin': net_io.errin,
+                'errout': net_io.errout,
+                'dropin': net_io.dropin,
+                'dropout': net_io.dropout,
+            },
+            'process': {
+                'memory_rss': proc_mem.rss,
+                'memory_vms': proc_mem.vms,
+                'cpu_percent': process.cpu_percent(interval=0),
+                'threads': process.num_threads(),
+            },
+            'processing': {
+                'queue_size': processor_queue,
+                'packets_captured': len(sniffer.captured_packets) if sniffer else 0,
+                'alerts_count': len(alerts),
+                'devices_count': len(sniffer.active_devices) if sniffer else 0,
+            },
+            'uptime': uptime_seconds,
+            'platform': platform.system(),
+            'platform_version': platform.version(),
+        })
+    except Exception as e:
+        logger.error(f"Error getting system health: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/traffic/flow', methods=['GET'])
+def api_traffic_flow():
+    """Get time-series traffic flow data for the D3 graph"""
+    try:
+        minutes = request.args.get('minutes', 30, type=int)
+        bucket_count = request.args.get('buckets', 30, type=int)
+
+        now = time.time()
+        window = minutes * 60
+        bucket_size = window / bucket_count
+
+        # Initialize buckets
+        buckets = []
+        for i in range(bucket_count):
+            bucket_start = now - window + (i * bucket_size)
+            buckets.append({
+                'timestamp': datetime.datetime.fromtimestamp(bucket_start).isoformat(),
+                'time_label': datetime.datetime.fromtimestamp(bucket_start).strftime('%H:%M'),
+                'tcp': 0,
+                'udp': 0,
+                'icmp': 0,
+                'other': 0,
+                'total': 0,
+                'bytes': 0,
+            })
+
+        # Fill buckets from captured packets
+        if sniffer and sniffer.captured_packets:
+            for pkt in sniffer.captured_packets:
+                try:
+                    ts_str = pkt.get('timestamp', '')
+                    if '.' in ts_str:
+                        pkt_time = datetime.datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
+                    else:
+                        pkt_time = datetime.datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                    pkt_ts = pkt_time.timestamp()
+                except Exception:
+                    continue
+
+                if pkt_ts < (now - window) or pkt_ts > now:
+                    continue
+
+                bucket_idx = min(bucket_count - 1, max(0, int((pkt_ts - (now - window)) / bucket_size)))
+
+                proto = (pkt.get('protocol') or '').upper()
+                if proto == 'TCP':
+                    buckets[bucket_idx]['tcp'] += 1
+                elif proto == 'UDP':
+                    buckets[bucket_idx]['udp'] += 1
+                elif proto == 'ICMP':
+                    buckets[bucket_idx]['icmp'] += 1
+                else:
+                    buckets[bucket_idx]['other'] += 1
+                buckets[bucket_idx]['total'] += 1
+                buckets[bucket_idx]['bytes'] += pkt.get('length', 0)
+
+        return jsonify({'data': buckets})
+    except Exception as e:
+        logger.error(f"Error fetching traffic flow: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/traffic/top-talkers', methods=['GET'])
+def api_top_talkers():
+    """Get top talkers (IPs with most traffic)"""
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        
+        # Calculate from devices or sniffer
+        talkers = []
+        if sniffer:
+            # We can use sniffer.devices which already has bytes_transferred
+            sorted_devices = sorted(sniffer.devices.items(), key=lambda x: x[1].get('bytes_transferred', 0), reverse=True)[:limit]
+            for ip, info in sorted_devices:
+                talkers.append({
+                    'ip': ip,
+                    'packets': info.get('packet_count', 0),
+                    'bytes': info.get('bytes_transferred', 0),
+                    'mac': info.get('mac', 'Unknown'),
+                    'vendor': info.get('vendor', 'Unknown')
+                })
+                
+        return jsonify(talkers)
+    except Exception as e:
+        logger.error(f"Error fetching top talkers: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 # ============== ANALYTICS API ==============
 

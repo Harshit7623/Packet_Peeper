@@ -30,6 +30,8 @@ export default function PacketMonitor() {
       source: p.src_ip,
       destination: p.dst_ip,
       protocol: p.protocol,
+      src_port: p.src_port,
+      dst_port: p.dst_port,
       port: p.dst_port,
       service: p.service || 'Unknown',
       size: p.length,
@@ -167,7 +169,6 @@ export default function PacketMonitor() {
                     <th className="px-6 py-4">Timestamp</th>
                     <th className="px-6 py-4">Flow (Source → Destination)</th>
                     <th className="px-6 py-4">Protocol</th>
-                    <th className="px-6 py-4">Port</th>
                     <th className="px-6 py-4">Service</th>
                     <th className="px-6 py-4">Size</th>
                     <th className="px-6 py-4 text-center">Status</th>
@@ -189,15 +190,18 @@ export default function PacketMonitor() {
                           {packet.timestamp?.split('T')[1]?.slice(0, 12) || packet.timestamp}
                         </td>
                         <td className="px-6 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-primary font-bold">{packet.source}</span>
-                            <motion.div
-                              animate={{ x: [0, 3, 0] }}
-                              transition={{ duration: 1, repeat: Infinity }}
-                            >
-                              <ArrowRight size={12} className="text-muted-foreground" />
-                            </motion.div>
-                            <span className="text-foreground">{packet.destination}</span>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-primary font-bold text-sm tracking-wide">
+                              {packet.source}{packet.src_port ? <span className="text-muted-foreground font-normal">:{packet.src_port}</span> : ''}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <motion.div animate={{ x: [0, 3, 0] }} transition={{ duration: 1, repeat: Infinity }}>
+                                <ArrowRight size={12} className="text-muted-foreground" />
+                              </motion.div>
+                              <span className="text-foreground text-sm tracking-wide">
+                                {packet.destination}{packet.dst_port ? <span className="text-muted-foreground font-normal">:{packet.dst_port}</span> : ''}
+                              </span>
+                            </div>
                           </div>
                         </td>
                         <td className="px-6 py-3">
@@ -210,7 +214,6 @@ export default function PacketMonitor() {
                             {packet.protocol}
                           </Badge>
                         </td>
-                        <td className="px-6 py-3 text-muted-foreground">{packet.port}</td>
                         <td className="px-6 py-3 text-foreground font-bold">{packet.service}</td>
                         <td className="px-6 py-3">
                           <div className="flex items-center gap-2">

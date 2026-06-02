@@ -140,6 +140,15 @@ class SocketService {
       }
     });
 
+    // Monitoring state broadcast (from API start/stop)
+    this.socket.on('monitoring_state', (data: any) => {
+      console.log('Monitoring state:', data);
+      useMonitorStore.getState().setSniffing(
+        !!data.is_running,
+        data.interface || null
+      );
+    });
+
     // Processor stats
     this.socket.on('processor_stats', (stats: any) => {
       console.log('Processor stats:', stats);
