@@ -75,6 +75,13 @@ This repository was **migrated** from a local development environment on **Janua
   - Alert spam with rate limiting
   - Z-index issues with AI modal
 
+### Phase 6: Desktop Packaging & Rust Preparation (Week 8)
+- Overhauled and completed local Authentication system with JWT and bcrypt.
+- Transitioned backend storage to persistent SQLite database.
+- Implemented comprehensive `pytest` suite for core services.
+- Packaged full application into a standalone Linux `.AppImage` via Electron Builder.
+- Scaffolded new `core_sniffer_rs` Rust library using `pcap` and `PyO3` in preparation for high-performance packet sniffing.
+
 ---
 
 ## 📊 Code Metrics

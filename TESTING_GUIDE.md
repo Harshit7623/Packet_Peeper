@@ -195,10 +195,25 @@ tail -f backend/logs/packet_peeper.log | grep DETECTION
 - [ ] Profile changes are logged
 - [ ] Alerts are timestamped and structured
 
+## Unit Testing (Pytest)
+
+The core components of Packet Peeper are rigorously tested using `pytest`. This includes the packet parsing logic, threat detection, and authentication services.
+
+### Running the Test Suite
+Ensure you are in the `backend/` directory and have installed `requirements-dev.txt`:
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+### What is Tested?
+- `test_auth.py`: Validates user registration, duplicate handling, password hashing, and JWT issuance.
+- `test_packet_sniffer.py`: Verifies packet parsing accuracy, DNS extraction, and IP matching algorithms.
+- `test_security_monitor.py`: Validates threat generation algorithms (DDoS, Brute Force, Port Scan) and cooldown mechanisms.
+
 ## Next Steps
 
 Once packet accuracy and AI are satisfactory, proceed to:
-1. **Docker containerization** - Build containers for consistent deployment
-2. **Database setup** - Configure PostgreSQL or SQLite
-3. **SSL/TLS certificates** - Secure all connections
-4. **Production deployment** - Deploy to cloud or on-premises server
+1. **Desktop App Compilation** - Build the Electron AppImage for distribution.
+2. **Rust Core Migration** - Swap the `scapy` packet sniffer for the high-performance `pcap` Rust module.

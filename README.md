@@ -1,6 +1,14 @@
 # Packet Peeper - Advanced Network Security Monitor
 
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![React](https://img.shields.io/badge/react-18.2.0-61dafb.svg?logo=react)
+![Electron](https://img.shields.io/badge/electron-28.1.0-47848f.svg?logo=electron)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 Packet Peeper is a comprehensive network security monitoring and packet analysis platform that provides real-time monitoring of network traffic, advanced threat detection, and device tracking. It combines powerful packet capture capabilities with intelligent security analysis and a beautiful, intuitive web interface.
+
+> 📚 **Deep Dive:** For detailed system workflows, packet processing pipelines, and authentication sequence diagrams, please refer to the [System Architecture Guide](ARCHITECTURE.md).
 
 ## Features
 
@@ -11,6 +19,10 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 - **DNS-based Classification**: Passive DNS query/response analysis for service identification
 - **TLS SNI Parsing**: Extract hostnames from HTTPS connections for better classification
 - **IP Range Matching**: Match traffic against known service IP ranges
+
+### Security & Authentication
+- **Local User Authentication**: Secure login system with bcrypt hashing and JWT tokens.
+- **Database Persistence**: SQLite integration for robust storage of user profiles and application state.
 
 ### Network Security & Threat Detection
 - **Real-time Security Monitoring**: Analyze packets for potential security threats
@@ -102,9 +114,27 @@ NetworkSnifferr/
 - Network interface with packet capture capabilities
 - Visual C++ Build Tools (for Windows, if compiling packages from source)
 
-## Installation
+## Installation & Usage
 
-### Backend Setup
+Packet Peeper is now distributed as a standalone Desktop Application via Electron. This is the recommended and easiest way to use the platform.
+
+### Desktop Application (Recommended)
+
+1. Navigate to the `desktop/electron/dist/` directory or download the latest release from the GitHub Releases page.
+2. **Linux**: Make the AppImage executable and run it:
+   ```bash
+   chmod +x "Packet Peeper-1.0.0.AppImage"
+   sudo ./"Packet Peeper-1.0.0.AppImage"
+   ```
+   *(Note: `sudo` is required to bind to the network interface for raw packet capture).*
+
+3. The Electron wrapper will automatically boot the compiled Python backend, connect the React frontend, and display the dashboard.
+
+### Developer Setup (From Source)
+
+If you wish to modify the code or run the application from source without compiling the Electron app, follow these steps:
+
+#### Backend Setup
 
 1. Clone the repository:
    ```bash
@@ -128,7 +158,7 @@ NetworkSnifferr/
    pip install -r backend/requirements.txt
    ```
 
-### Frontend Setup
+#### Frontend Setup
 
 1. Navigate to the React app directory:
    ```bash
@@ -451,8 +481,8 @@ pip install -r backend/requirements.txt
 
 ## Future Enhancements
 
-- [ ] Database persistence (PostgreSQL integration)
-- [ ] User authentication and authorization
+- [x] Database persistence (SQLite/PostgreSQL integration)
+- [x] User authentication and authorization
 - [ ] Multi-user support
 - [ ] Advanced filtering and search
 - [ ] Machine learning-based anomaly detection
