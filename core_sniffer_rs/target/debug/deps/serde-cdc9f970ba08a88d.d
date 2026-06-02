@@ -1,0 +1,14 @@
+/run/media/harshitdv/New Volume/NetworkSnifferr/core_sniffer_rs/target/debug/deps/serde-cdc9f970ba08a88d.d: /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /run/media/harshitdv/New\ Volume/NetworkSnifferr/core_sniffer_rs/target/debug/build/serde-6aeb262f7e7c722f/out/private.rs
+
+/run/media/harshitdv/New Volume/NetworkSnifferr/core_sniffer_rs/target/debug/deps/libserde-cdc9f970ba08a88d.rlib: /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /run/media/harshitdv/New\ Volume/NetworkSnifferr/core_sniffer_rs/target/debug/build/serde-6aeb262f7e7c722f/out/private.rs
+
+/run/media/harshitdv/New Volume/NetworkSnifferr/core_sniffer_rs/target/debug/deps/libserde-cdc9f970ba08a88d.rmeta: /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /run/media/harshitdv/New\ Volume/NetworkSnifferr/core_sniffer_rs/target/debug/build/serde-6aeb262f7e7c722f/out/private.rs
+
+/home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/harshitdv/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/run/media/harshitdv/New\ Volume/NetworkSnifferr/core_sniffer_rs/target/debug/build/serde-6aeb262f7e7c722f/out/private.rs:
+
+# env-dep:OUT_DIR=/run/media/harshitdv/New Volume/NetworkSnifferr/core_sniffer_rs/target/debug/build/serde-6aeb262f7e7c722f/out

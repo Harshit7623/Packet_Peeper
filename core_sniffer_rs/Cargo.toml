@@ -1,0 +1,15 @@
+[package]
+name = "core_sniffer_rs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "core_sniffer_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+pcap = "1.2.0"
+pnet = "0.34.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
