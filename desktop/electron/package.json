@@ -52,7 +52,7 @@
     ],
     "extraResources": [
       {
-        "from": "../../backend/dist",
+        "from": "../../backend/dist/packet_peeper_backend",
         "to": "backend",
         "filter": ["**/*"]
       },

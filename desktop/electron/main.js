@@ -87,6 +87,7 @@ const buildBackendEnv = () => {
 const resolveBackendCommand = (interface_) => {
   const overridePath = process.env.PACKET_PEEPER_BACKEND_PATH;
   if (overridePath && fs.existsSync(overridePath)) {
+    try { fs.chmodSync(overridePath, 0o755); } catch (e) { /* ignore */ }
     return { command: overridePath, args: [interface_], usesPython: false };
   }
 
@@ -148,11 +149,15 @@ function createWindow() {
   });
 
   // Load the app
+  // In both dev and production, load via the Flask backend URL.
+  // The Flask server serves the SPA at all non-API routes, which
+  // prevents 404 flashes that happen when loading a static file.
   if (isDev) {
     mainWindow.loadURL(`http://localhost:${FRONTEND_PORT}`);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(getFrontendPath());
+    // Load from Flask backend which serves the SPA correctly
+    mainWindow.loadURL(`http://localhost:${BACKEND_PORT}`);
   }
 
   // Show window when ready
