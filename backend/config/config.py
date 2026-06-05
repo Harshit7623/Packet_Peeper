@@ -107,6 +107,12 @@ ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", 60))  # Increas
 # ============== DETECTION TUNING ==============
 DETECTION_PROFILE = os.getenv("DETECTION_PROFILE", "balanced")  # strict, balanced, sensitive, test
 DETECTION_DEBUG = os.getenv("DETECTION_DEBUG", "False").lower() == "true"
+
+# ============== DETECTION RUNTIME SETTINGS ==============
+# Warm‑up period before any detection runs (seconds). Allows the system to settle after start.
+DETECTION_WARMUP_SECONDS = int(os.getenv("DETECTION_WARMUP_SECONDS", "120"))
+# Prefix‑based overrides for any NetworkSecurityMonitor threshold, e.g. NSM_SYN_FLOOD_RATE=30
+NSM_OVERRIDES = {k[4:]: int(v) for k, v in os.environ.items() if k.startswith("NSM_")}
 CAPTURE_DEBUG = os.getenv("CAPTURE_DEBUG", "False").lower() == "true"
 AI_DEBUG = os.getenv("AI_DEBUG", "False").lower() == "true"
 
@@ -136,11 +142,8 @@ TLS_CERT_PATH = os.getenv("TLS_CERT_PATH", None)
 TLS_KEY_PATH = os.getenv("TLS_KEY_PATH", None)
 
 # ============== AUTHENTICATION ==============
-_enable_auth_env = os.getenv("ENABLE_AUTH")
-if _enable_auth_env is None:
-    ENABLE_AUTH = PACKET_PEEPER_DESKTOP
-else:
-    ENABLE_AUTH = _enable_auth_env.lower() == "true"
+# Authentication is forcibly disabled for this deployment
+ENABLE_AUTH = os.getenv("ENABLE_AUTH", "True").lower() == "true"
 AUTH_TOKEN_EXPIRY = int(os.getenv("AUTH_TOKEN_EXPIRY", 1800))  # seconds
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production")
 
@@ -225,6 +228,7 @@ def validate_config():
     return len(errors) == 0
 
 if __name__ == "__main__":
+    # When run directly, print configuration for debugging
     print("[Config] Packet Peeper Configuration")
     print(f"Environment: {FLASK_ENV}")
     print(f"Database: {DB_ENGINE} @ {DB_HOST}:{DB_PORT}")

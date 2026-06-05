@@ -9,7 +9,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, and_, or_
-from sqlalchemy.ext.declarative import declarative_base
+try:
+    from sqlalchemy.orm import declarative_base
+except ImportError:
+    from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 from config.config import DATABASE_URL, DB_ENGINE, PACKET_BUFFER_SIZE, FEATURES

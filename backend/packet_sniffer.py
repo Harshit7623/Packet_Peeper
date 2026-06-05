@@ -368,8 +368,9 @@ class PacketSniffer:
         self.metrics = {"total": 0, "classified": 0, "unknown": 0, "by_service": {}}
         self.security_monitor = NetworkSecurityMonitor()  # Initialize security monitor
         self.security_alerts = []  # Store detected cyberattack events
-        self.local_network = None  # Will store the local network CIDR
-        self._running = False  # Flag used by stop_sniffing() to gracefully end capture
+        self.local_network = None # Will store the local network CIDR
+        self.default_gateway = None # Will store the default gateway IP (excluded from devices)
+        self._running = False # Flag used by stop_sniffing() to gracefully end capture
         # --- Bandwidth and protocol tracking ---
         self.bandwidth_history = []  # [(timestamp, bytes)]
         self.peak_bandwidth = 0
@@ -382,6 +383,24 @@ class PacketSniffer:
         self.jitter_samples = []
         logger.info("PacketSniffer initialized with classification & metrics")
         self.discover_devices()
+        # Detect the default gateway after interface discovery
+        self._detect_gateway()
+        if self.default_gateway:
+            logger.info(f"[Capture] Default gateway detected: {self.default_gateway}")
+        else:
+            # Fallback to first host in the subnet (commonly .1) if local network known
+            if self.local_network:
+                try:
+                    network = ipaddress.ip_network(self.local_network, strict=False)
+                    first_host = next(network.hosts(), None)
+                    if first_host:
+                        self.default_gateway = str(first_host)
+                        _debug_log(f"Gateway fallback: using first host in subnet: {self.default_gateway}")
+                        logger.info(f"[Capture] Default gateway (fallback) set to: {self.default_gateway}")
+                except Exception:
+                    pass
+            if not self.default_gateway:
+                logger.warning("[Capture] Could not detect default gateway — router may appear in device list")
 
     # --- device discovery & stats omitted for brevity (keep your original code) ---
     def discover_devices(self):
@@ -396,9 +415,58 @@ class PacketSniffer:
                 self._discover_devices_windows()
             else:
                 self._discover_devices_psutil()
-
         except Exception as e:
             logging.exception(f"Error discovering devices: {e}")
+
+
+
+    def _detect_gateway(self):
+        """Detect the default gateway IP using the system routing table."""
+        import subprocess
+        import re
+
+        try:
+            system_name = platform.system().lower()
+            if system_name == 'windows':
+                output = subprocess.check_output(
+                    'route print 0.0.0.0', shell=True, text=True, errors='ignore', timeout=5
+                )
+                match = re.search(r'0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)', output)
+            else:
+                output = subprocess.check_output(
+                    ['ip', 'route', 'show', 'default'], text=True, errors='ignore', timeout=5
+                )
+                match = re.search(r'default\s+via\s+(\d+\.\d+\.\d+\.\d+)', output)
+
+            if match:
+                self.default_gateway = match.group(1)
+                _debug_log(f"Default gateway detected: {self.default_gateway}")
+                return
+
+            # Fallback: try /proc/net/route on Linux
+            if system_name != 'windows':
+                try:
+                    with open('/proc/net/route', 'r') as f:
+                        for line in f:
+                            fields = line.strip().split()
+                            if len(fields) >= 3 and fields[1] == '00000000':
+                                # Destination 00000000 = default route
+                                gw_hex = fields[2]
+                                if gw_hex and gw_hex != '00000000':
+                                    # Convert hex IP (little-endian) to dotted decimal
+                                    gw_int = int(gw_hex, 16)
+                                    self.default_gateway = socket.inet_ntoa(
+                                        gw_int.to_bytes(4, byteorder='little')
+                                    )
+                                    _debug_log(f"Default gateway from /proc/net/route: {self.default_gateway}")
+                                    return
+                except Exception:
+                    pass
+
+        except Exception as e:
+            _debug_log(f"Gateway detection failed: {e}")
+
+        self.default_gateway = None
 
     def _discover_devices_windows(self):
         """Discover network interfaces using Windows ipconfig output."""
@@ -510,19 +578,6 @@ class PacketSniffer:
             'last_seen': time.time()
         }
 
-        self.active_devices[ip_addr] = {
-            'ipAddress': ip_addr,
-            'macAddress': mac_addr,
-            'hostname': adapter_name,
-            'type': 'Interface',
-            'firstSeen': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'lastSeen': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'packetsIn': 0,
-            'packetsOut': 0,
-            'bytesIn': 0,
-            'bytesOut': 0,
-            'status': 'Active'
-        }
 
     def is_local_ip(self, ip):
         """Check if an IP is in the local network range or any private IP range."""
@@ -561,7 +616,9 @@ class PacketSniffer:
         # Only track LOCAL network devices, not remote internet hosts
         if not self.is_local_ip(ip):
             return
-
+        # Skip the default gateway/router – we don't want to list it as a device
+        if getattr(self, 'default_gateway', None) and ip == self.default_gateway:
+            return
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         if ip not in self.active_devices:

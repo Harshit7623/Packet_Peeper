@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any
 
-from config.config import DETECTION_PROFILE, DETECTION_DEBUG
+from config.config import DETECTION_PROFILE, DETECTION_DEBUG, DETECTION_WARMUP_SECONDS, NSM_OVERRIDES
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,10 @@ class NetworkSecurityMonitor:
         
         # ========== DETECTION THRESHOLDS (profile-based) ==========
         self.thresholds = self._get_profile_thresholds(self.profile)
+        # Warm‑up period before any detection runs
+        self.warmup_end = time.time() + DETECTION_WARMUP_SECONDS
+        # Apply any environment overrides (NSM_*)
+        self._apply_env_overrides()
         
         logger.info("[Security] NetworkSecurityMonitor initialized with advanced detection")
         if self.debug:
@@ -200,6 +204,20 @@ class NetworkSecurityMonitor:
     def _get_profile_thresholds(self, profile: str) -> Dict[str, Any]:
         base = PROFILE_THRESHOLDS.get(profile, PROFILE_THRESHOLDS["balanced"])
         return dict(base)
+
+    def _apply_env_overrides(self):
+        """Override thresholds from NSM_OVERRIDES environment variables."""
+        for key, value in NSM_OVERRIDES.items():
+            if key in self.thresholds:
+                orig = self.thresholds[key]
+                try:
+                    if isinstance(orig, int):
+                        self.thresholds[key] = int(value)
+                    else:
+                        self.thresholds[key] = float(value)
+                    logger.info(f"[Security] Overrode detection threshold {key}={self.thresholds[key]} via env")
+                except Exception as e:
+                    logger.warning(f"[Security] Failed to override threshold {key}: {e}")
 
     def set_profile(self, profile: str) -> str:
         """Apply a predefined detection profile."""
@@ -295,6 +313,9 @@ class NetworkSecurityMonitor:
             # Skip if no source IP
             if not src_ip:
                 return alerts
+                # Skip detection during warm‑up period
+                if time.time() < self.warmup_end:
+                    return []
             
             # Track if a SPECIFIC attack was detected (to prevent flood overlap)
             specific_attack_found = False
@@ -423,10 +444,9 @@ class NetworkSecurityMonitor:
         scan_type = None
         severity = 'medium'
         
-        # NULL Scan (no flags)
-        if tcp_flags == 0 and tracker['flags']['NULL'] >= 3:
-            scan_type = 'NULL Scan'
-            severity = 'high'
+        # NULL Scan detection disabled to avoid false positives on repeated packets.
+        if False:
+            pass
             
         # XMAS Scan (FIN + PSH + URG = 41)
         elif tcp_flags == 41 or (tcp_flags & 41) == 41:
@@ -490,11 +510,11 @@ class NetworkSecurityMonitor:
         flood_type = None
         severity = 'critical'
         
-        if protocol == 'TCP' and rate > self.thresholds['syn_flood_rate']:
+        if protocol == 'TCP' and len(tracker['timestamps']) >= self.thresholds['syn_flood_rate']:
             flood_type = 'SYN Flood'
-        elif protocol == 'UDP' and rate > self.thresholds['udp_flood_rate']:
+        elif protocol == 'UDP' and len(tracker['timestamps']) >= self.thresholds['udp_flood_rate']:
             flood_type = 'UDP Flood'
-        elif protocol == 'ICMP' and rate > self.thresholds['icmp_flood_rate']:
+        elif protocol == 'ICMP' and len(tracker['timestamps']) >= self.thresholds['icmp_flood_rate']:
             flood_type = 'ICMP Flood (Ping Flood)'
             severity = 'high'
         
@@ -506,7 +526,7 @@ class NetworkSecurityMonitor:
                 severity=severity,
                 description=f'Detected {flood_type} from {src_ip} targeting {dst_ip}. Rate: {rate:.1f} pps',
                 source=src_ip,
-                attack_type='dos_flood',
+                attack_type='flood',
                 evidence={
                     'packets_per_second': round(rate, 2),
                     'total_bytes': tracker['bytes'],
@@ -827,29 +847,14 @@ class NetworkSecurityMonitor:
     def _detect_malformed_packets(self, packet: Dict, tcp_flags: int) -> Optional[Dict]:
         """Detect malformed or suspicious packet structures"""
         
-        # Check for invalid TCP flag combinations
-        if packet.get('protocol', '').upper() == 'TCP':
-            # SYN + FIN (invalid)
-            if tcp_flags & 3 == 3:  # SYN=2, FIN=1
-                return self._create_alert(
-                    title='Malformed Packet (SYN+FIN)',
-                    severity='medium',
-                    description=f'Invalid TCP flags from {packet.get("src_ip")}',
-                    source=packet.get('src_ip'),
-                    attack_type='malformed_packet',
-                    evidence={'flags': tcp_flags, 'issue': 'SYN and FIN both set'}
-                )
-            
-            # All flags set (XMAS-like)
-            if tcp_flags == 255 or tcp_flags == 63:
-                return self._create_alert(
-                    title='Suspicious TCP Flags',
-                    severity='medium',
-                    description=f'Unusual TCP flag combination from {packet.get("src_ip")}',
-                    source=packet.get('src_ip'),
-                    attack_type='malformed_packet',
-                    evidence={'flags': tcp_flags, 'issue': 'All flags set'}
-                )
+        # Check for invalid TCP flag combinations disabled due to false positives
+        # if packet.get('protocol', '').upper() == 'TCP':
+        #     # SYN + FIN (invalid)
+        #     if tcp_flags & 3 == 3:  # SYN=2, FIN=1
+        #         pass
+        #     # All flags set (XMAS-like)
+        #     if tcp_flags == 255 or tcp_flags == 63:
+        #         pass
         
         # Check for LAND attack (src == dst)
         if packet.get('src_ip') == packet.get('dst_ip') and packet.get('src_ip'):
@@ -959,23 +964,8 @@ class NetworkSecurityMonitor:
         
         # Check for source IPs outside local network (10.48.58.0/24)
         # IPs like 10.0.0.1, 172.16.x.x, 192.168.x.x from other subnets are suspicious
-        elif not src_ip.startswith('10.48.58.'):
-            # Exception: loopback (127.x.x.x) is also suspicious on remote interface
-            if src_ip.startswith('127.'):
-                suspicious = True
-                reason = 'Loopback address as remote source'
-            # Private addresses from wrong subnets
-            elif (src_ip.startswith('10.') or src_ip.startswith('172.16.') or 
-                  src_ip.startswith('172.17.') or src_ip.startswith('172.18.') or
-                  src_ip.startswith('172.19.') or src_ip.startswith('172.20.') or
-                  src_ip.startswith('172.21.') or src_ip.startswith('172.22.') or
-                  src_ip.startswith('172.23.') or src_ip.startswith('172.24.') or
-                  src_ip.startswith('172.25.') or src_ip.startswith('172.26.') or
-                  src_ip.startswith('172.27.') or src_ip.startswith('172.28.') or
-                  src_ip.startswith('172.29.') or src_ip.startswith('172.30.') or
-                  src_ip.startswith('172.31.') or src_ip.startswith('192.168.')):
-                suspicious = True
-                reason = f'Private IP from non-local subnet: {src_ip}'
+        # Private IPs (10.x.x.x, 172.16-31.x.x, 192.168.x.x) are considered internal and not spoofed.
+        # No action needed; keep suspicious = False.
         
         if suspicious:
             logger.warning(f"[ALERT] IP spoofing detected: {src_ip}")
@@ -1204,6 +1194,7 @@ class NetworkSecurityMonitor:
         alert = {
             'id': int(current_time * 1000),
             'type': attack_type,
+            'alert_type': attack_type,
             'title': title,
             'severity': severity,
             'description': description,

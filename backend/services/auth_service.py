@@ -10,6 +10,7 @@ import logging
 import re
 import secrets
 from datetime import datetime, timedelta
+import time
 from typing import Dict, Optional, Tuple, List
 
 import bcrypt
@@ -230,8 +231,8 @@ class AuthService:
             'role': user.get('role', 'operator'),
             'sid': session_id,
             'dfp': device_fingerprint,
-            'iat': int(now.timestamp()),
-            'exp': int(expires_at.timestamp()),
+            'iat': int(time.time()),
+            'exp': int(time.time()) + self.token_expiry,
         }
 
         token = jwt.encode(token_payload, self.jwt_secret, algorithm=self.jwt_algorithm)

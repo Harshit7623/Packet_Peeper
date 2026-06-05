@@ -1,6 +1,6 @@
 """User model for database persistence"""
 from datetime import datetime
-from werkzeug.security import generate_password_hash, check_password_hash
+import bcrypt
 
 class User:
     """User entity with secure password handling"""
@@ -21,12 +21,12 @@ class User:
     
     @staticmethod
     def hash_password(password):
-        """Hash a plaintext password using werkzeug"""
-        return generate_password_hash(password, method='pbkdf2:sha256', salt_length=16)
+        """Hash a plaintext password using bcrypt"""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     def verify_password(self, password):
-        """Verify a plaintext password against stored hash"""
-        return check_password_hash(self.password_hash, password)
+        """Verify a plaintext password against stored bcrypt hash"""
+        return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
     
     def to_dict(self):
         """Convert user to dictionary for API responses (excludes password)"""

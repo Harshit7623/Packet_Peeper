@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, List, Tuple
 from functools import wraps
 
-from werkzeug.security import generate_password_hash, check_password_hash
+import bcrypt
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from flask import request, g
 
@@ -110,7 +110,7 @@ class UserService:
             return False, msg, None
         
         # Generate password hash
-        password_hash = generate_password_hash(password, method='pbkdf2:sha256')
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         
         try:
             # Save user to database
@@ -177,7 +177,7 @@ class UserService:
             
             # Verify password
             password_hash = user.get('password_hash')
-            if not check_password_hash(password_hash, password):
+            if not bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8')):
                 # Increment failed attempts
                 attempts = user.get('login_attempts', 0) + 1
                 update = {'login_attempts': attempts}
@@ -330,7 +330,7 @@ class UserService:
             return False, msg
         
         # Update password
-        new_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
+        new_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         success = self.db_service.update_user(username, {'password_hash': new_hash})
         
         if success:

@@ -17,6 +17,20 @@ import os
 import socket
 from collections import defaultdict, deque
 from pathlib import Path
+
+import sys
+import os
+if getattr(sys, 'frozen', False):
+    # Running in a PyInstaller bundle
+    base_dir = sys._MEIPASS
+    # Add _internal or MEIPASS to path to ensure services/config are found
+    if base_dir not in sys.path:
+        sys.path.insert(0, base_dir)
+    # Also add the directory containing the executable just in case
+    exe_dir = os.path.dirname(sys.executable)
+    if exe_dir not in sys.path:
+        sys.path.insert(0, exe_dir)
+
 from services.auth_service import AuthService, require_auth
 
 # Import config first (before anything else)
@@ -34,6 +48,9 @@ from config.config import (
     PACKET_DEDUP_WINDOW_SECONDS, PACKET_DEDUP_MAX
 )
 
+# Import DB models for clearing data
+from services.database_services import AlertRecord, DeviceRecord, PacketRecord, UserSessionRecord
+
 # Import services
 from services.database_services import get_database_service
 from services.packet_processor import init_packet_processor, get_packet_processor
@@ -44,7 +61,28 @@ from network_security_monitor import NetworkSecurityMonitor
 
 # ============== FLASK SETUP ==============
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-FRONTEND_DIST_DIR = PROJECT_ROOT / 'frontend' / 'dist'
+
+# Determine frontend dist path – works in development and packaged AppImage.
+# In an AppImage the layout is:
+#   resources/backend/packet_peeper_backend   (CWD = resources/backend)
+#   resources/frontend/index.html
+# In development:
+#   backend/app.py  →  PROJECT_ROOT/frontend/dist
+_FRONTEND_CANDIDATES = [
+    PROJECT_ROOT / 'frontend' / 'dist',          # dev layout
+    Path(os.getcwd()) / '..' / 'frontend',       # AppImage: CWD=resources/backend, sibling=resources/frontend
+    Path(os.getcwd()).parent / 'frontend',        # same, resolved
+    Path(__file__).resolve().parent / '..' / '..' / 'frontend',  # __file__ inside resources/backend/backend/
+]
+FRONTEND_DIST_DIR = None
+for _cand in _FRONTEND_CANDIDATES:
+    _cand = _cand.resolve()
+    if (_cand / 'index.html').exists():
+        FRONTEND_DIST_DIR = _cand
+        break
+if FRONTEND_DIST_DIR is None:
+    FRONTEND_DIST_DIR = PROJECT_ROOT / 'frontend' / 'dist'  # fallback
+
 
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "300"))
@@ -118,6 +156,7 @@ socketio = SocketIO(
 
 # ============== GLOBAL STATE ==============
 alerts = []
+jwt_blacklist = set()
 logs = []
 sniffer = None
 db_service = None
@@ -135,7 +174,6 @@ PUBLIC_API_PATHS = {
     '/api/auth/register',
     '/api/auth/status',
     '/api/health',
-    '/api/profile',
     '/api/reports',
     '/api/system/health',
     '/api/system/info',
@@ -424,27 +462,37 @@ def packet_callback(packet_info: dict):
 
 
 def _collect_device_snapshot() -> list[dict]:
-    """Collect interface and active device views into a single list."""
+    """Collect active device view (with packet counts) and enrich with interface metadata.
+    Active devices provide per‑IP packet counters, which are what the UI displays.
+    Interface entries are added only when they represent an IP not already present.
+    Gateway IPs (detected as sniffer.default_gateway) are excluded to avoid showing routers.
+    """
     if not sniffer:
         return []
 
-    devices = sniffer.get_devices() if hasattr(sniffer, 'get_devices') else []
+    # Active devices have the real packet stats (packetsIn/Out). Use them as the base.
     active_devices = list(getattr(sniffer, 'active_devices', {}).values())
+    interface_devices = sniffer.get_devices() if hasattr(sniffer, 'get_devices') else []
 
     merged = []
     seen_ips = set()
 
-    for device in devices:
+    for device in active_devices:
         ip = device.get('ipAddress') or device.get('ip_address')
         if ip:
             seen_ips.add(ip)
         merged.append(device)
 
-    for device in active_devices:
+    # Add any interface device that wasn't already represented by an active device.
+    for device in interface_devices:
         ip = device.get('ipAddress') or device.get('ip_address')
         if ip and ip in seen_ips:
             continue
         merged.append(device)
+
+    # Exclude the default gateway if it was detected (gateway/router not shown as device).
+    if getattr(sniffer, 'default_gateway', None):
+        merged = [d for d in merged if (d.get('ipAddress') or d.get('ip_address')) != sniffer.default_gateway]
 
     return merged
 
@@ -528,6 +576,7 @@ def handle_preflight_and_guards():
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
         response.headers['Access-Control-Max-Age'] = '600'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
         return response
 
     if not request.path.startswith('/api/'):
@@ -562,6 +611,7 @@ def after_request(response):
     response.headers['Access-Control-Allow-Origin'] = _resolve_cors_origin()
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
     response.headers['Vary'] = 'Origin'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
@@ -607,7 +657,15 @@ def serve_spa(path):
 def api_auth_login():
     """Authenticate operator and issue a signed access token."""
     if not ENABLE_AUTH:
-        return jsonify({'error': 'Authentication is disabled by server configuration'}), 400
+        # Authentication is disabled; return a dummy token for frontend compatibility
+        dummy_token = 'dummy-token'
+        return jsonify({
+            'message': 'Login successful (auth disabled)',
+            'token': dummy_token,
+            'expires_in': 0,
+            'user': {'username': 'operator'},
+            'auth_enabled': False,
+        })
 
     allowed, retry_after = _check_rate_limit('auth-login', RATE_LIMIT_LOGIN_ATTEMPTS, RATE_LIMIT_WINDOW_SECONDS)
     if not allowed:
@@ -768,6 +826,7 @@ def api_auth_logout():
 # ============== USER PROFILE ENDPOINTS ==============
 
 @app.route('/api/profile', methods=['GET'])
+@require_auth
 def api_get_profile():
     """Get current user profile information."""
     if not ENABLE_AUTH or not auth_service:
@@ -985,11 +1044,15 @@ def get_devices():
     """Get network devices"""
     try:
         if sniffer:
+            # Return live snapshot of devices (active devices with packet counts)
             devices = _collect_device_snapshot()
+            # Keep DB in sync if persistence is enabled, but never replace the response with DB data.
             if db_service and FEATURES['persistent_storage']:
-                db_devices = db_service.get_devices()
-                if db_devices:
-                    return jsonify(db_devices)
+                for device in devices:
+                    try:
+                        db_service.update_device(device)
+                    except Exception as e:
+                        logger.debug(f"DB update failed for device {device.get('ip_address')}: {e}")
             return jsonify(devices)
         return jsonify([])
     except Exception as e:
@@ -1262,6 +1325,37 @@ def api_clear_alerts():
         return jsonify({'message': 'All alerts cleared'})
     except Exception as e:
         logger.error(f"Error clearing alerts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/clear_all', methods=['POST'])
+def api_clear_all():
+    """Clear all in-memory and persisted data: alerts, devices, packets, user sessions."""
+    if ENABLE_AUTH:
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not token or token in jwt_blacklist:
+            return jsonify({'error': 'Invalid or missing token'}), 403
+    global alerts, sniffer, db_service
+    try:
+        # Clear in-memory alerts
+        with alerts_lock:
+            alerts.clear()
+        # Clear sniffing data
+        if sniffer:
+            sniffer.captured_packets.clear()
+            sniffer.devices.clear()
+            sniffer.active_devices.clear()
+        # Clear persistent storage tables
+        if db_service and FEATURES['persistent_storage']:
+            with db_service.get_session() as session:
+                session.query(AlertRecord).delete()
+                session.query(DeviceRecord).delete()
+                session.query(PacketRecord).delete()
+                session.query(UserSessionRecord).delete()
+                session.commit()
+        add_log('info', 'API', 'All data cleared via /api/clear_all')
+        return jsonify({'message': 'All data cleared'}), 200
+    except Exception as e:
+        logger.error(f"Error clearing all data: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/test-mode', methods=['POST'])
@@ -1737,7 +1831,7 @@ def api_traffic_flow():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/traffic/top-talkers', methods=['GET'])
-def api_top_talkers():
+def api_traffic_top_talkers():
     """Get top talkers (IPs with most traffic)"""
     try:
         limit = request.args.get('limit', 10, type=int)
@@ -1848,7 +1942,7 @@ def api_protocol_distribution():
         return jsonify({'distribution': []}), 200
 
 @app.route('/api/analytics/top-talkers', methods=['GET'])
-def api_top_talkers():
+def api_analytics_top_talkers():
     """Get top talking devices"""
     try:
         limit = request.args.get('limit', 10, type=int)
@@ -1931,7 +2025,7 @@ def handle_connect(auth=None):
             if not token:
                 token = _extract_token_from_request()
 
-            payload, error_code = _verify_access_token(token)
+            payload, error_code = auth_service.verify_token(token)
             if error_code:
                 logger.warning(f"[Socket] Unauthorized connection attempt: {error_code}")
                 return False
@@ -2037,7 +2131,8 @@ def handle_scan_devices(data=None):
     """Handle device scan request from WebSocket"""
     try:
         if sniffer:
-            devices = sniffer.get_devices()
+            # Use the same snapshot logic as the periodic update loop to include packet stats and filter gateways.
+            devices = _collect_device_snapshot()
             emit('devices_update', {'devices': devices, 'totalDevices': len(devices)})
             add_log('info', 'WebSocket', f'Device scan complete: {len(devices)} devices found')
         else:
