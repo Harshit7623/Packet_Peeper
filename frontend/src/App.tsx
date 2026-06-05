@@ -123,24 +123,33 @@ function AppContent() {
 
       // Load initial data from REST API
       try {
-        const [alerts, devices, stats, logs] = await Promise.allSettled([
+        const results = await Promise.allSettled([
           apiService.getAlerts(),
           apiService.getDevices(),
           apiService.getStats(),
           apiService.getLogs(),
         ]);
 
-        if (alerts.status === 'fulfilled') {
-          useMonitorStore.getState().setAlerts(alerts.value);
+        const hasAuthError = results.some(
+          (result) => result.status === 'rejected' && result.reason instanceof ApiError && result.reason.status === 401
+        );
+
+        if (hasAuthError) {
+          await refreshStatus();
+          return;
         }
-        if (devices.status === 'fulfilled') {
-          useMonitorStore.getState().setDevices(devices.value);
+
+        if (results[0].status === 'fulfilled') {
+          useMonitorStore.getState().setAlerts(results[0].value);
         }
-        if (stats.status === 'fulfilled') {
-          useMonitorStore.getState().setStats(stats.value);
+        if (results[1].status === 'fulfilled') {
+          useMonitorStore.getState().setDevices(results[1].value);
         }
-        if (logs.status === 'fulfilled') {
-          useMonitorStore.getState().setLogs(logs.value);
+        if (results[2].status === 'fulfilled') {
+          useMonitorStore.getState().setStats(results[2].value);
+        }
+        if (results[3].status === 'fulfilled') {
+          useMonitorStore.getState().setLogs(results[3].value);
         }
       } catch (dataError) {
         if (dataError instanceof ApiError && dataError.status === 401) {

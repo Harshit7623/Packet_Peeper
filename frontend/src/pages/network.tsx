@@ -72,7 +72,7 @@ export default function NetworkMap() {
       type: d.device_type?.toLowerCase() || 'default',
       status: 'online' as const,
       mac: d.mac_address,
-      packets: (d.packets_in || 0) + (d.packets_out || 0)
+       packets: (d.packets_in || 0) + (d.packets_out || 0)
     }));
     
     // Calculate positions for star topology (excluding router which is center)

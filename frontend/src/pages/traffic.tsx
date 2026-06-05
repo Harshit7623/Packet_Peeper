@@ -378,37 +378,31 @@ export default function TrafficAnalysis() {
                   </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trafficTimeline}>
+                    <LineChart data={trafficTimeline}>
                       <defs>
-                        <linearGradient id="colorInbound" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id="colorTCP" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.3}/>
                           <stop offset="95%" stopColor="#00d4ff" stopOpacity={0}/>
                         </linearGradient>
-                        <linearGradient id="colorOutbound" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id="colorUDP" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#ff6b35" stopOpacity={0.3}/>
                           <stop offset="95%" stopColor="#ff6b35" stopOpacity={0}/>
                         </linearGradient>
+                        <linearGradient id="colorICMP" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                        </linearGradient>
                       </defs>
-                      <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fill: 'hsl(var(--muted-foreground))', fontSize: 11}} />
+                      <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
                       <YAxis hide />
-                      <Tooltip 
+                      <Tooltip
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px' }}
-                        formatter={(value: number) => {
-                          if ((trafficTimeline[0] as any)?.bandwidth !== undefined) {
-                            return [`${value.toLocaleString()} MB/s`, ''];
-                          }
-                          return [value.toLocaleString() + ' packets', ''];
-                        }}
+                        formatter={(value: number) => [value.toLocaleString() + ' packets', '']}
                       />
-                      {(trafficTimeline[0] as any)?.bandwidth !== undefined ? (
-                        <Area type="monotone" dataKey="bandwidth" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
-                      ) : (
-                        <>
-                          <Area type="monotone" dataKey="inbound" stroke="#00d4ff" strokeWidth={2} fillOpacity={1} fill="url(#colorInbound)" />
-                          <Area type="monotone" dataKey="outbound" stroke="#ff6b35" strokeWidth={2} fillOpacity={1} fill="url(#colorOutbound)" />
-                        </>
-                      )}
-                    </AreaChart>
+                      <Line type="monotone" dataKey="tcp" stroke="#00d4ff" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="udp" stroke="#ff6b35" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="icmp" stroke="#10b981" strokeWidth={2} dot={false} />
+                    </LineChart>
                   </ResponsiveContainer>
                 )}
               </CardContent>

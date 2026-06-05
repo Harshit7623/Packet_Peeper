@@ -44,6 +44,8 @@ export interface Device {
   packets_out: number;
   bytes_in?: number;
   bytes_out?: number;
+  packetsCaptured?: number;
+  packets_captured?: number;
 }
 
 export interface TrafficStats {
