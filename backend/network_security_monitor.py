@@ -313,9 +313,10 @@ class NetworkSecurityMonitor:
             # Skip if no source IP
             if not src_ip:
                 return alerts
-                # Skip detection during warm‑up period
-                if time.time() < self.warmup_end:
-                    return []
+            
+            # Skip detection during warm‑up period
+            if time.time() < self.warmup_end:
+                return []
             
             # Track if a SPECIFIC attack was detected (to prevent flood overlap)
             specific_attack_found = False

@@ -7,7 +7,7 @@ Modern React-based frontend for the Packet Peeper network security monitor.
 - **React 19** with TypeScript
 - **Vite** for fast development and building
 - **Tailwind CSS v4** for styling
-- **shadcn/ui** components (Radix UI primitives)
+- **shadcn/ui** components (Radix UI primitives) - [Documentation](https://ui.shadcn.com/)
 - **Zustand** for state management
 - **Socket.IO** for real-time communication with backend
 - **Recharts** for data visualization
@@ -58,12 +58,13 @@ frontend/
 ├── src/
 │   ├── components/
 │   │   ├── layout/          # MainLayout, Sidebar, Header
+│   │   ├── ai/              # AI Assistant chat interface
 │   │   └── ui/              # shadcn/ui components
 │   ├── hooks/               # Custom React hooks
 │   ├── lib/                 # Utilities and query client
 │   ├── pages/               # Route pages
 │   ├── services/            # Socket.IO service
-│   ├── store/               # Zustand store
+│   ├── store/               # Zustand stores (authStore.ts, monitorStore.ts)
 │   ├── App.tsx              # Main app component
 │   ├── main.tsx             # Entry point
 │   └── index.css            # Global styles
@@ -92,8 +93,8 @@ frontend/
 
 The frontend connects to the Flask-SocketIO backend for real-time data:
 
-- **WebSocket Events**: `new_packet`, `new_alert`, `devices_update`, `update_statistics`
-- **REST API**: Available through the Vite proxy at `/api/*`
+- **WebSocket Events**: `new_packet`, `new_alert`, `devices_update`, `update_statistics`, `scan_devices`, `scan_result`, `alerts_sync`, `disconnect`
+- **REST API Proxy**: In development, `vite.config.ts` proxies all `/api/*` requests to `http://localhost:5000` to avoid CORS issues.
 
 ## Scripts
 
@@ -101,3 +102,4 @@ The frontend connects to the Flask-SocketIO backend for real-time data:
 - `npm run build` - Build for production
 - `npm run preview` - Preview production build
 - `npm run check` - Type check with TypeScript
+- `npm run test` - Run unit tests (Vitest)

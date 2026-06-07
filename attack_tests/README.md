@@ -23,7 +23,12 @@ ip route | grep default
 ```
 
 ## Overview
+*(Last Updated: June 2026, v1.0.0)*
+
 This toolkit simulates various network attacks to test your PacketPeeper detection capabilities.
+
+### ⚠️ Prerequisite
+**The Packet Peeper Backend MUST be running and actively monitoring the correct network interface before executing these scripts.** Otherwise, the attacks will occur, but no alerts will be generated.
 
 ## Attack Categories
 
@@ -65,19 +70,37 @@ pip install scapy requests
 # IMPORTANT: Replace with your router/gateway IP or another device on your LAN!
 # DO NOT use 127.0.0.1 - loopback traffic is not captured!
 
-# Run all tests against your router
+# Display help and available arguments for any script
+python run_all_attacks.py --help
+python port_scanner.py --help
+
+# 1. Run all tests against your router
 python run_all_attacks.py --target 192.168.1.1
 
-# Run specific attack against your router
+# 2. Port Scanning
 python port_scanner.py --target 192.168.1.1 --type syn
+
+# 3. Denial of Service (DoS)
 python dos_attacks.py --target 192.168.1.1 --type synflood --duration 10
+
+# 4. Application Layer Attacks (SQLi, XSS, Brute Force)
 python application_attacks.py --target 192.168.1.1 --type all
+
+# 5. Spoofing Attacks
+python spoofing_attacks.py --target 192.168.1.1 --type arp
+
+# 6. Advanced Attacks (DNS Tunneling, Beaconing, Exfiltration)
+python advanced_attacks.py --target 192.168.1.1 --type all
 ```
 
 ## Detection Expected
-Your PacketPeeper should detect:
-- [HIGH] Port scan detection
-- [CRITICAL] DDoS/Flood attacks
-- [HIGH] ARP spoofing attempts
-- [MEDIUM] Suspicious HTTP payloads
-- [HIGH] Brute force patterns
+Your PacketPeeper should detect and categorize the following alerts based on the active profile:
+- `[HIGH] SYN Port Scan Detected` (from `port_scanner.py`)
+- `[CRITICAL] SYN Flood Attack Detected` (from `dos_attacks.py`)
+- `[CRITICAL] ARP Spoofing Detected` (from `spoofing_attacks.py`)
+- `[CRITICAL] SQL Injection Attempt` (from `application_attacks.py`)
+- `[HIGH] XSS Attack Attempt` (from `application_attacks.py`)
+- `[HIGH] Brute Force Attack Detected` (from `application_attacks.py`)
+- `[HIGH] DNS Tunneling Detected` (from `advanced_attacks.py`)
+- `[HIGH] Data Exfiltration Detected` (from `advanced_attacks.py`)
+- `[HIGH] Session Hijacking Attempt` (from `advanced_attacks.py`)

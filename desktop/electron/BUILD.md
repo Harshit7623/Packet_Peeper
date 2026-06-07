@@ -12,13 +12,16 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/packet-peeper.git
-cd packet-peeper/desktop/electron
+git clone https://github.com/Harshit7623/Packet_Peeper.git
+cd Packet_Peeper/desktop/electron
+
+# Prerequisites: Ensure your .env file is set up before building the backend
+# cp ../../.env.example ../../.env
 
 # Build the backend binary (one-time per release)
 cd ../../backend/packaging
 pip install -r requirements-build.txt
-build_backend.bat
+./build_backend.bat
 cd ../../desktop/electron
 
 # Install Electron dependencies
@@ -73,6 +76,14 @@ pip install -r requirements-build.txt
 cd ../../desktop/electron
 npm run build:linux
 ```
+
+### Running the Linux AppImage
+
+```bash
+chmod +x "dist/Packet Peeper-1.0.0.AppImage"
+sudo -E ./"dist/Packet Peeper-1.0.0.AppImage" --no-sandbox
+```
+*(Note: `sudo -E` preserves your environment variables so the display works properly. `--no-sandbox` may be required on some distributions).*
 
 ## Development
 
@@ -137,7 +148,14 @@ Updates check on app startup and can be manually triggered.
 - Change `FLASK_PORT` in app configuration
 - Or stop the application using port 5000
 
+### Configuration Overrides & Persistence
+- **Backend Path:** You can override the embedded backend executable path using the `PACKET_PEEPER_BACKEND_PATH` environment variable.
+- **Persistence:** Application state is stored using `electron-store`. The configuration file is typically located at:
+  - Linux: `~/.config/Packet Peeper/config.json`
+  - Windows: `%APPDATA%\Packet Peeper\config.json`
+  - macOS: `~/Library/Application Support/Packet Peeper/config.json`
+
 ## Support
 
 For issues or feature requests, please visit:
-https://github.com/yourusername/packet-peeper/issues
+https://github.com/Harshit7623/Packet_Peeper/issues

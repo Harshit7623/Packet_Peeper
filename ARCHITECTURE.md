@@ -16,6 +16,7 @@ graph TD
 
     subgraph Backend Core Python
         PS[Packet Sniffer Engine]
+        GATEWAY[Gateway Detection Filter]
         NSM[Network Security Monitor]
         DB[(SQLite Database)]
         AUTH[Auth Service]
@@ -31,15 +32,16 @@ graph TD
 
     %% Flow
     NIC -->|Raw Packets| PCAP
-    PCAP -->|Parsed Packets| PS
+    PCAP -->|Parsed Packets| GATEWAY
+    GATEWAY -->|Filtered Packets| PS
     PS -->|Extracted Metadata| NSM
     PS -->|Live Stats| SIO
     NSM -->|Threats & Alerts| SIO
-    NSM <-->|Cooldown State| DB
+    NSM <-->|In-Memory Cooldown State| NSM
     AUTH <-->|User Credentials| DB
     FLASK <-->|Auth Tokens| AUTH
 
-    SIO == WebSocket 200ms ==> REACT
+    SIO == WebSocket 200ms (devices_update, alerts_sync) ==> REACT
     FLASK -- REST API --> REACT
     REACT --> CHART
     MAIN -->|Spawns Backend Binary| FLASK
@@ -79,9 +81,11 @@ sequenceDiagram
         Note right of Classifier: Security Analysis Phase
         Classifier->>NSM: Send packet metadata
         NSM->>NSM: Update stateful connection tracking
-        NSM->>NSM: Check Port Scan thresholds (5+ ports/60s)
-        NSM->>NSM: Check DDoS thresholds (100+ pkts/s)
+        NSM->>NSM: Check Port Scan thresholds
+        NSM->>NSM: Check DDoS thresholds
         NSM->>NSM: Check Brute Force (SSH/RDP/Telnet)
+        NSM->>NSM: Check Session Hijacking & Beaconing
+        NSM->>NSM: Check DNS Tunneling & Exfiltration
     end
     
     alt Threat Detected
@@ -117,7 +121,7 @@ sequenceDiagram
         AuthAPI-->>Frontend: 401 Unauthorized
         Frontend-->>User: Show Error Message
     else Valid Credentials
-        AuthAPI->>AuthAPI: Generate JWT (Expires 24h)
+        AuthAPI->>AuthAPI: Generate JWT (AUTH_TOKEN_EXPIRY, default 30m)
         AuthAPI-->>Frontend: 200 OK + { token, user_id }
         Frontend->>Frontend: Store JWT in localStorage
         Frontend->>Frontend: Redirect to Dashboard
@@ -127,4 +131,30 @@ sequenceDiagram
             AuthAPI-->>Frontend: Upgrade to WebSocket
         end
     end
+```
+
+## Device Detection Pipeline
+
+This sequence shows how devices are dynamically identified and filtered.
+
+```mermaid
+sequenceDiagram
+    participant PCAP as Packet Sniffer
+    participant Tracker as Device Tracker
+    participant Gateway as Gateway Filter
+    participant DB as SQLite DB
+    participant SIO as Socket.IO
+
+    PCAP->>Tracker: update_active_device(IP, MAC)
+    Tracker->>Tracker: Resolve OUI Manufacturer
+    Tracker->>Gateway: Check if IP is Gateway
+    
+    alt Is Gateway
+        Gateway-->>Tracker: Flag as Router/Gateway
+    else Is Standard Device
+        Gateway-->>Tracker: Standard Device
+    end
+    
+    Tracker->>DB: Update device last_seen & stats
+    Tracker->>SIO: Emit `devices_update` & `scan_devices`
 ```

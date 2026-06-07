@@ -2,13 +2,25 @@
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
-![React](https://img.shields.io/badge/react-18.2.0-61dafb.svg?logo=react)
+![React](https://img.shields.io/badge/react-19-61dafb.svg?logo=react)
 ![Electron](https://img.shields.io/badge/electron-28.1.0-47848f.svg?logo=electron)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 Packet Peeper is a comprehensive network security monitoring and packet analysis platform that provides real-time monitoring of network traffic, advanced threat detection, and device tracking. It combines powerful packet capture capabilities with intelligent security analysis and a beautiful, intuitive web interface.
 
 > 📚 **Deep Dive:** For detailed system workflows, packet processing pipelines, and authentication sequence diagrams, please refer to the [System Architecture Guide](ARCHITECTURE.md).
+
+## Table of Contents
+- [Features](#features)
+- [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
+- [Installation & Usage](#installation--usage)
+- [How It Works](#how-it-works)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Development](#development)
+- [API Endpoints & WebSocket Events](#api-endpoints--websocket-events)
+- [Troubleshooting](#troubleshooting)
 
 ## Features
 
@@ -87,22 +99,22 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 
 ```
 NetworkSnifferr/
+├── attack_tests/                   # Attack simulation toolkit
 ├── backend/                        # Flask + Socket.IO backend
 │   ├── app.py
 │   ├── packet_sniffer.py
 │   ├── network_security_monitor.py
-│   ├── config/
-│   ├── services/
+│   ├── config/                     # Backend configuration overrides
+│   ├── services/                   # Authentication & Database services
+│   ├── tests/                      # Pytest test suites
 │   └── requirements.txt
+├── desktop/                        # Electron desktop wrapper
+├── docs/                           # Detailed documentation
 ├── frontend/                       # React + Vite frontend
 │   ├── src/
 │   ├── package.json
 │   └── vite.config.ts
-├── attack_tests/                   # Attack simulation toolkit
-├── desktop/electron/               # Electron desktop wrapper
 ├── docker_compose.yml
-├── start_backend.sh
-├── start_frontend.sh
 └── README.md
 ```
 
@@ -124,15 +136,15 @@ Packet Peeper is now distributed as a standalone Desktop Application via Electro
 2. **Linux**: Make the AppImage executable and run it:
    ```bash
    chmod +x "Packet Peeper-1.0.0.AppImage"
-   sudo ./"Packet Peeper-1.0.0.AppImage"
+   sudo -E ./"Packet Peeper-1.0.0.AppImage" --no-sandbox
    ```
-   *(Note: `sudo` is required to bind to the network interface for raw packet capture).*
+   *(Note: `sudo -E` preserves your environment variables so the display works properly, and is required to bind to the network interface for raw packet capture).*
 
 3. The Electron wrapper will automatically boot the compiled Python backend, connect the React frontend, and display the dashboard.
 
 ### Developer Setup (From Source)
 
-If you wish to modify the code or run the application from source without compiling the Electron app, follow these steps:
+If you wish to modify the code or run the application from source without compiling the Electron app, please see the [Build Guide](BUILD.md) for full instructions.
 
 #### Backend Setup
 
@@ -229,10 +241,11 @@ The frontend will be available at `http://localhost:5173`.
 
 ### Attack Simulation (Testing Only)
 
-To test the security detection capabilities:
+To test the security detection capabilities, make sure the backend is running, then use:
 
 ```bash
-python test_attacks.py
+cd attack_tests
+python run_all_attacks.py
 ```
 
 This simulates various attacks:
@@ -259,9 +272,9 @@ This simulates various attacks:
    - IP range matching against known service CIDR blocks
    - Port-based fallback classification
 5. **Security Analysis**: Each packet is analyzed for threats:
-   - Port scan detection (threshold: 5+ unique ports in 60 seconds)
-   - DDoS detection (threshold: 100+ packets/second)
-   - Brute force detection (threshold: 20+ attempts/minute on SSH/RDP/Telnet)
+   - Port scan detection (Dynamic threshold based on current active profile)
+   - DDoS detection (Dynamic threshold based on current active profile)
+   - Brute force detection (Dynamic threshold based on current active profile)
    - DNS tunneling detection (suspicious patterns in DNS queries)
 6. **Device Tracking**: Active devices are discovered and monitored:
    - IP address tracking
@@ -289,18 +302,13 @@ The NetworkSecurityMonitor class implements multiple detection algorithms:
 ## Configuration
 
 ### Alert Thresholds (in network_security_monitor.py)
+Thresholds are now governed by a dynamic profile system (`strict`, `balanced`, `sensitive`, `test`). The active profile can be changed via the API.
+
 ```python
-# Port scan detection
-threshold: 5 unique ports in 60 seconds
-
-# DDoS detection
-threshold: 100+ packets/second
-
-# Brute force detection
-threshold: 20+ attempts/minute
-
 # Alert cooldown
-Default: 10 seconds (reduced for testing)
+ALERT_COOLDOWN_SECONDS: configurable (default 120, reduced for test modes)
+
+# Thresholds update dynamically without restart.
 ```
 
 ### BPF Filter (in packet_sniffer.py)
@@ -398,7 +406,7 @@ To add new dashboard pages:
 - **Administrator Required**: Packet capture requires elevated privileges
 - **Local Network Only**: Device detection limited to configured network range
 - **No Encryption**: Use on trusted networks only (WebSocket in development)
-- **No Authentication**: Implement authentication for production deployment
+- **Local User Authentication**: Implemented and active; requires setup via backend.
 - **Service Fingerprinting**: Based on public IP ranges and domain databases
 
 ## Troubleshooting
@@ -462,22 +470,27 @@ pip install -r backend/requirements.txt
 
 ## API Endpoints & WebSocket Events
 
+### REST API Endpoints
+
+**Authentication & User Management**
+- `POST /api/auth/login`: Authenticate and receive JWT
+- `GET /api/auth/profile`: Get current user profile
+- `POST /api/auth/change-password`: Update user password
+- `POST /api/auth/logout`: Invalidate session
+
+**System Configuration**
+- `POST /api/test-mode`: Switch detection profiles dynamically
+
 ### WebSocket Events (from Backend)
-- `connect`: Client connected
-- `new_packet`: New packet captured
-- `new_alert`: New security alert
-- `devices_update`: Device list updated
-- `update_statistics`: Statistics updated
-- `traffic_update`: Traffic analysis updated
-- `new_log`: New log entry
+- `connect` / `disconnect`: Client connection state
+- `devices_update`: Real-time active devices list
+- `scan_devices`: Device scanning status
+- `alerts_sync`: Real-time security alerts
+- `statistics_update`: Real-time network and system stats
+- `logs_update`: Application and system logs
 
 ### WebSocket Events (to Backend)
-- `get_alerts`: Request alert history
-- `get_devices`: Request device list
-- `get_logs`: Request logs
-- `set_device_filter`: Filter packets by device
-- `start_capture`: Start packet capture
-- `stop_capture`: Stop packet capture
+- Handled automatically via namespaces once connected.
 
 ## Future Enhancements
 
