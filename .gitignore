@@ -5,6 +5,19 @@ venv/
 __pycache__/
 *.pyc
 
+# Runtime / Data
+backend/data/
+*.pid
+
+# Build artifacts
+backend/packet_peeper_backend.spec
+
+# Test / Login
+backend/login_res.json
+
+# OS
+Thumbs.db
+
 # Build outputs
 dist/
 build/
