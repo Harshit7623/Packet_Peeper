@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, and_, or_
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, and_, or_, func, Index
 try:
     from sqlalchemy.orm import declarative_base
 except ImportError:
@@ -212,6 +212,59 @@ class TrafficStatRecord(Base):
             'average_bandwidth': self.average_bandwidth,
         }
 
+class TrafficFeatureRecord(Base):
+    """1-minute traffic feature snapshot for historical analysis & ML training.
+
+    Each row is a summary of all traffic observed in a single 1-minute window.
+    This table supports:
+      - Historical time-series queries (bandwidth, packet rates over time)
+      - ML anomaly detection (feature vectors for Isolation Forest etc.)
+      - Trend analysis and reporting
+
+    Estimated storage: ~2-3 MB/day for a typical home network.
+    """
+    __tablename__ = "traffic_features"
+
+    id = Column(Integer, primary_key=True)
+    window_start = Column(DateTime, nullable=False, index=True)
+    total_packets = Column(Integer, default=0)
+    total_bytes = Column(Integer, default=0)
+    tcp_packets = Column(Integer, default=0)
+    udp_packets = Column(Integer, default=0)
+    icmp_packets = Column(Integer, default=0)
+    other_packets = Column(Integer, default=0)
+    avg_packet_size = Column(Float, default=0.0)
+    unique_src_ips = Column(Integer, default=0)
+    unique_dst_ips = Column(Integer, default=0)
+    unique_dst_ports = Column(Integer, default=0)
+    syn_count = Column(Integer, default=0)
+    syn_ack_ratio = Column(Float, default=0.0)
+    dns_queries = Column(Integer, default=0)
+    arp_packets = Column(Integer, default=0)
+    bandwidth_bps = Column(Float, default=0.0)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'window_start': self.window_start.isoformat(),
+            'total_packets': self.total_packets,
+            'total_bytes': self.total_bytes,
+            'tcp_packets': self.tcp_packets,
+            'udp_packets': self.udp_packets,
+            'icmp_packets': self.icmp_packets,
+            'other_packets': self.other_packets,
+            'avg_packet_size': self.avg_packet_size,
+            'unique_src_ips': self.unique_src_ips,
+            'unique_dst_ips': self.unique_dst_ips,
+            'unique_dst_ports': self.unique_dst_ports,
+            'syn_count': self.syn_count,
+            'syn_ack_ratio': self.syn_ack_ratio,
+            'dns_queries': self.dns_queries,
+            'arp_packets': self.arp_packets,
+            'bandwidth_bps': self.bandwidth_bps,
+        }
+
+
 class ReportRecord(Base):
     """Generated report metadata"""
     __tablename__ = "reports"
@@ -402,6 +455,46 @@ class DatabaseService:
             logger.error(f"Error dismissing alert: {str(e)}")
             return False
     
+    # ============== ALERT OPERATIONS ==============
+    
+    def save_alert(self, alert_info: Dict) -> bool:
+        """Save a security alert to the database"""
+        if not self.SessionLocal:
+            return False
+        
+        try:
+            with self.get_session() as session:
+                alert = AlertRecord(
+                    alert_type=alert_info.get('type'),
+                    severity=alert_info.get('severity', 'medium'),
+                    source_ip=alert_info.get('source_ip') or alert_info.get('source'),
+                    destination_ip=alert_info.get('destination_ip') or alert_info.get('destination'),
+                    title=alert_info.get('title'),
+                    description=alert_info.get('description'),
+                    evidence=json.dumps(alert_info.get('evidence', {})),
+                )
+                session.add(alert)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving alert: {str(e)}")
+            return False
+    
+    def dismiss_alert(self, alert_id: int) -> bool:
+        """Mark an alert as resolved/dismissed"""
+        if not self.SessionLocal:
+            return False
+        
+        try:
+            with self.get_session() as session:
+                alert = session.query(AlertRecord).filter_by(id=alert_id).first()
+                if alert:
+                    alert.resolved = True
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Error dismissing alert: {str(e)}")
+            return False
+    
     def get_alerts(self,
                    start_time: Optional[datetime] = None,
                    end_time: Optional[datetime] = None,
@@ -432,11 +525,6 @@ class DatabaseService:
             logger.error(f"Error retrieving alerts: {str(e)}")
             return []
     
-    def clear_alerts(self) -> bool:
-        """Delete all alerts from database"""
-        if not self.SessionLocal:
-            return False
-
     # ============== TRAFFIC STATISTICS OPERATIONS ==============
 
     def save_traffic_stats(self, stats: Dict) -> bool:
@@ -502,18 +590,8 @@ class DatabaseService:
                 ]
         except Exception as e:
             logger.error(f"Error retrieving bandwidth history: {str(e)}")
-            return []
-        
-        try:
-            with self.get_session() as session:
-                session.query(AlertRecord).delete()
-                session.commit()
-                logger.info("All alerts cleared from database")
-                return True
-        except Exception as e:
-            logger.error(f"Error clearing alerts from database: {str(e)}")
-            return False
-    
+        return []
+
     # ============== DEVICE OPERATIONS ==============
     
     def update_device(self, device_info: Dict) -> bool:
@@ -571,6 +649,262 @@ class DatabaseService:
             logger.error(f"Error retrieving devices: {str(e)}")
             return []
     
+    # ============== TRAFFIC FEATURE (1-min) OPERATIONS ==============
+
+    def save_traffic_feature(self, feature: Dict) -> bool:
+        """Save a 1-minute traffic feature snapshot"""
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                record = TrafficFeatureRecord(
+                    window_start=feature.get('window_start', datetime.utcnow()),
+                    total_packets=feature.get('total_packets', 0),
+                    total_bytes=feature.get('total_bytes', 0),
+                    tcp_packets=feature.get('tcp_packets', 0),
+                    udp_packets=feature.get('udp_packets', 0),
+                    icmp_packets=feature.get('icmp_packets', 0),
+                    other_packets=feature.get('other_packets', 0),
+                    avg_packet_size=feature.get('avg_packet_size', 0.0),
+                    unique_src_ips=feature.get('unique_src_ips', 0),
+                    unique_dst_ips=feature.get('unique_dst_ips', 0),
+                    unique_dst_ports=feature.get('unique_dst_ports', 0),
+                    syn_count=feature.get('syn_count', 0),
+                    syn_ack_ratio=feature.get('syn_ack_ratio', 0.0),
+                    dns_queries=feature.get('dns_queries', 0),
+                    arp_packets=feature.get('arp_packets', 0),
+                    bandwidth_bps=feature.get('bandwidth_bps', 0.0),
+                )
+                session.add(record)
+                return True
+        except Exception as e:
+            logger.error(f"Error saving traffic feature: {str(e)}")
+            return False
+
+    def get_traffic_features(self,
+                             start_time: Optional[datetime] = None,
+                             end_time: Optional[datetime] = None,
+                             limit: int = 10080) -> List[Dict]:
+        """Retrieve 1-minute traffic feature records (default 7 days = 10080 mins)"""
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                query = session.query(TrafficFeatureRecord)
+                if start_time:
+                    query = query.filter(TrafficFeatureRecord.window_start >= start_time)
+                if end_time:
+                    query = query.filter(TrafficFeatureRecord.window_start <= end_time)
+                rows = query.order_by(TrafficFeatureRecord.window_start.asc()).limit(limit).all()
+                return [r.to_dict() for r in rows]
+        except Exception as e:
+            logger.error(f"Error retrieving traffic features: {str(e)}")
+            return []
+
+    def get_traffic_features_aggregated(self,
+                                        start_time: datetime,
+                                        end_time: datetime,
+                                        bucket_minutes: int = 60) -> List[Dict]:
+        """Aggregate 1-min traffic features into larger time buckets for charting.
+
+        bucket_minutes: 5, 15, 60, 360, 1440 (1h, 6h, 1d)
+        Returns list of dicts with summed/averaged values per bucket.
+        """
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                rows = session.query(TrafficFeatureRecord).filter(
+                    and_(
+                        TrafficFeatureRecord.window_start >= start_time,
+                        TrafficFeatureRecord.window_start <= end_time,
+                    )
+                ).order_by(TrafficFeatureRecord.window_start.asc()).all()
+
+            if not rows:
+                return []
+
+            bucket_sec = bucket_minutes * 60
+            buckets = []
+            current_bucket_start = None
+            current_rows = []
+
+            for row in rows:
+                ts = row.window_start
+                bucket_ts = datetime.utcfromtimestamp(
+                    (ts.timestamp() // bucket_sec) * bucket_sec
+                )
+                if current_bucket_start is None or bucket_ts != current_bucket_start:
+                    if current_rows:
+                        buckets.append(self._aggregate_feature_bucket(current_bucket_start, current_rows))
+                    current_bucket_start = bucket_ts
+                    current_rows = [row]
+                else:
+                    current_rows.append(row)
+
+            if current_rows:
+                buckets.append(self._aggregate_feature_bucket(current_bucket_start, current_rows))
+
+            return buckets
+        except Exception as e:
+            logger.error(f"Error aggregating traffic features: {str(e)}")
+            return []
+
+    def _aggregate_feature_bucket(self, bucket_start: datetime, rows: list) -> Dict:
+        """Aggregate a list of TrafficFeatureRecord rows into a single bucket dict."""
+        n = len(rows) or 1
+        total_packets = sum(r.total_packets for r in rows)
+        total_bytes = sum(r.total_bytes for r in rows)
+        return {
+            'window_start': bucket_start.isoformat(),
+            'total_packets': total_packets,
+            'total_bytes': total_bytes,
+            'tcp_packets': sum(r.tcp_packets for r in rows),
+            'udp_packets': sum(r.udp_packets for r in rows),
+            'icmp_packets': sum(r.icmp_packets for r in rows),
+            'other_packets': sum(r.other_packets for r in rows),
+            'avg_packet_size': round(total_bytes / max(total_packets, 1), 2),
+            'unique_src_ips': max(r.unique_src_ips for r in rows),
+            'unique_dst_ips': max(r.unique_dst_ips for r in rows),
+            'unique_dst_ports': max(r.unique_dst_ports for r in rows),
+            'syn_count': sum(r.syn_count for r in rows),
+            'syn_ack_ratio': round(sum(r.syn_ack_ratio for r in rows) / n, 4),
+            'dns_queries': sum(r.dns_queries for r in rows),
+            'arp_packets': sum(r.arp_packets for r in rows),
+            'bandwidth_bps': round(sum(r.bandwidth_bps for r in rows) / n, 2),
+            'sample_count': n,
+        }
+
+    def get_historical_summary(self, start_time: datetime, end_time: datetime) -> Dict:
+        """Compute summary statistics over a time range for dashboard cards."""
+        if not self.SessionLocal:
+            return {}
+        try:
+            with self.get_session() as session:
+                base = session.query(TrafficFeatureRecord).filter(
+                    and_(
+                        TrafficFeatureRecord.window_start >= start_time,
+                        TrafficFeatureRecord.window_start <= end_time,
+                    )
+                )
+
+                total_packets = base.with_entities(func.coalesce(func.sum(TrafficFeatureRecord.total_packets), 0)).scalar()
+                total_bytes = base.with_entities(func.coalesce(func.sum(TrafficFeatureRecord.total_bytes), 0)).scalar()
+                avg_bandwidth = base.with_entities(func.coalesce(func.avg(TrafficFeatureRecord.bandwidth_bps), 0)).scalar()
+                peak_bandwidth = base.with_entities(func.coalesce(func.max(TrafficFeatureRecord.bandwidth_bps), 0)).scalar()
+                total_alerts = session.query(func.count(AlertRecord.id)).filter(
+                    and_(
+                        AlertRecord.timestamp >= start_time,
+                        AlertRecord.timestamp <= end_time,
+                    )
+                ).scalar() or 0
+                unique_src_ips = base.with_entities(func.coalesce(func.max(TrafficFeatureRecord.unique_src_ips), 0)).scalar()
+
+            return {
+                'total_packets': total_packets,
+                'total_bytes': total_bytes,
+                'avg_bandwidth_bps': round(float(avg_bandwidth), 2),
+                'peak_bandwidth_bps': round(float(peak_bandwidth), 2),
+                'total_alerts': total_alerts,
+                'unique_src_ips': unique_src_ips,
+                'start_time': start_time.isoformat(),
+                'end_time': end_time.isoformat(),
+            }
+        except Exception as e:
+            logger.error(f"Error computing historical summary: {str(e)}")
+            return {}
+
+    def get_protocol_trend(self, start_time: datetime, end_time: datetime,
+                           bucket_minutes: int = 60) -> List[Dict]:
+        """Protocol distribution over time for stacked area charts."""
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                rows = session.query(TrafficFeatureRecord).filter(
+                    and_(
+                        TrafficFeatureRecord.window_start >= start_time,
+                        TrafficFeatureRecord.window_start <= end_time,
+                    )
+                ).order_by(TrafficFeatureRecord.window_start.asc()).all()
+
+            if not rows:
+                return []
+
+            bucket_sec = bucket_minutes * 60
+            buckets = []
+            current_bucket_start = None
+            current_rows = []
+
+            for row in rows:
+                ts = row.window_start
+                bucket_ts = datetime.utcfromtimestamp(
+                    (ts.timestamp() // bucket_sec) * bucket_sec
+                )
+                if current_bucket_start is None or bucket_ts != current_bucket_start:
+                    if current_rows:
+                        buckets.append({
+                            'window_start': current_bucket_start.isoformat(),
+                            'tcp': sum(r.tcp_packets for r in current_rows),
+                            'udp': sum(r.udp_packets for r in current_rows),
+                            'icmp': sum(r.icmp_packets for r in current_rows),
+                            'other': sum(r.other_packets for r in current_rows),
+                            'total': sum(r.total_packets for r in current_rows),
+                        })
+                    current_bucket_start = bucket_ts
+                    current_rows = [row]
+                else:
+                    current_rows.append(row)
+
+            if current_rows:
+                buckets.append({
+                    'window_start': current_bucket_start.isoformat(),
+                    'tcp': sum(r.tcp_packets for r in current_rows),
+                    'udp': sum(r.udp_packets for r in current_rows),
+                    'icmp': sum(r.icmp_packets for r in current_rows),
+                    'other': sum(r.other_packets for r in current_rows),
+                    'total': sum(r.total_packets for r in current_rows),
+                })
+
+            return buckets
+        except Exception as e:
+            logger.error(f"Error computing protocol trend: {str(e)}")
+            return []
+
+    def get_top_talkers_history(self, start_time: datetime, end_time: datetime,
+                                limit: int = 10) -> List[Dict]:
+        """Top talkers by packet count from device records within a time range."""
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                devices = session.query(DeviceRecord).filter(
+                    and_(
+                        DeviceRecord.last_seen >= start_time,
+                        DeviceRecord.last_seen <= end_time,
+                    )
+                ).all()
+
+                talkers = []
+                for d in devices:
+                    total_packets = (d.packets_in or 0) + (d.packets_out or 0)
+                    total_bytes = (d.bytes_in or 0) + (d.bytes_out or 0)
+                    talkers.append({
+                        'ip_address': d.ip_address,
+                        'hostname': d.hostname,
+                        'mac_address': d.mac_address,
+                        'device_type': d.device_type,
+                        'total_packets': total_packets,
+                        'total_bytes': total_bytes,
+                        'last_seen': d.last_seen.isoformat() if d.last_seen else None,
+                    })
+
+                talkers.sort(key=lambda x: x['total_bytes'], reverse=True)
+                return talkers[:limit]
+        except Exception as e:
+            logger.error(f"Error computing top talkers history: {str(e)}")
+            return []
+
     # ============== REPORT OPERATIONS ==============
     
     def save_report(self, report_info: Dict) -> bool:
@@ -935,12 +1269,16 @@ class DatabaseService:
                 deleted_stats = session.query(TrafficStatRecord).filter(
                     TrafficStatRecord.timestamp < cutoff_date
                 ).delete()
-            
-            logger.info(
-                f"Cleanup: Deleted {deleted_packets} packets, {deleted_alerts} alerts, "
-                f"and {deleted_stats} traffic stats"
-            )
-            return deleted_packets + deleted_alerts + deleted_stats
+
+                deleted_features = session.query(TrafficFeatureRecord).filter(
+                    TrafficFeatureRecord.window_start < cutoff_date
+                ).delete()
+
+                logger.info(
+                    f"Cleanup: Deleted {deleted_packets} packets, {deleted_alerts} alerts, "
+                    f"{deleted_stats} traffic stats, {deleted_features} traffic features"
+                )
+                return deleted_packets + deleted_alerts + deleted_stats + deleted_features
         
         except Exception as e:
             logger.error(f"Error cleaning up records: {str(e)}")

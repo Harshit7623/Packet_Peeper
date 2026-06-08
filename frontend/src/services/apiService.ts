@@ -556,3 +556,162 @@ class ApiService {
 export const apiService = new ApiService();
 
 export default ApiService;
+
+// ==================== History / Historical Data ====================
+
+  async getHistoryTimeseries(timeRange: string = '24h', bucket?: number, start?: string, end?: string) {
+    const params = new URLSearchParams();
+    if (start && end) {
+      params.set('start', start);
+      params.set('end', end);
+    } else {
+      params.set('range', timeRange);
+    }
+    if (bucket !== undefined) {
+      params.set('bucket', String(bucket));
+    }
+    return this.request<{
+      data: Array<{
+        window_start: string;
+        total_packets: number;
+        total_bytes: number;
+        tcp_packets: number;
+        udp_packets: number;
+        icmp_packets: number;
+        other_packets: number;
+        avg_packet_size: number;
+        unique_src_ips: number;
+        unique_dst_ips: number;
+        unique_dst_ports: number;
+        syn_count: number;
+        syn_ack_ratio: number;
+        dns_queries: number;
+        arp_packets: number;
+        bandwidth_bps: number;
+        sample_count: number;
+      }>;
+      start: string;
+      end: string;
+      bucket_minutes: number;
+      count: number;
+    }>(`/api/history/timeseries?${params.toString()}`);
+  }
+
+  async getHistorySummary(timeRange: string = '24h', start?: string, end?: string) {
+    const params = new URLSearchParams();
+    if (start && end) {
+      params.set('start', start);
+      params.set('end', end);
+    } else {
+      params.set('range', timeRange);
+    }
+    return this.request<{
+      total_packets: number;
+      total_bytes: number;
+      avg_bandwidth_bps: number;
+      peak_bandwidth_bps: number;
+      total_alerts: number;
+      unique_src_ips: number;
+      start_time: string;
+      end_time: string;
+    }>(`/api/history/summary?${params.toString()}`);
+  }
+
+  async getHistoryProtocols(timeRange: string = '24h', bucket?: number, start?: string, end?: string) {
+    const params = new URLSearchParams();
+    if (start && end) {
+      params.set('start', start);
+      params.set('end', end);
+    } else {
+      params.set('range', timeRange);
+    }
+    if (bucket !== undefined) {
+      params.set('bucket', String(bucket));
+    }
+    return this.request<{
+      data: Array<{
+        window_start: string;
+        tcp: number;
+        udp: number;
+        icmp: number;
+        other: number;
+        total: number;
+      }>;
+      start: string;
+      end: string;
+      bucket_minutes: number;
+      count: number;
+    }>(`/api/history/protocols?${params.toString()}`);
+  }
+
+  async getHistoryTopTalkers(timeRange: string = '7d', limit: number = 10, start?: string, end?: string) {
+    const params = new URLSearchParams();
+    if (start && end) {
+      params.set('start', start);
+      params.set('end', end);
+    } else {
+      params.set('range', timeRange);
+    }
+    params.set('limit', String(limit));
+    return this.request<{
+      data: Array<{
+        ip_address: string;
+        hostname: string | null;
+        mac_address: string | null;
+        device_type: string | null;
+        total_packets: number;
+        total_bytes: number;
+        last_seen: string | null;
+      }>;
+      start: string;
+      end: string;
+      count: number;
+    }>(`/api/history/top-talkers?${params.toString()}`);
+  }
+
+  async getHistoryAlerts(timeRange: string = '7d', severity?: string, limit: number = 100, start?: string, end?: string) {
+    const params = new URLSearchParams();
+    if (start && end) {
+      params.set('start', start);
+      params.set('end', end);
+    } else {
+      params.set('range', timeRange);
+    }
+    if (severity) {
+      params.set('severity', severity);
+    }
+    params.set('limit', String(limit));
+    return this.request<{
+      data: any[];
+      start: string;
+      end: string;
+      count: number;
+    }>(`/api/history/alerts?${params.toString()}`);
+  }
+
+  async getHistoryBandwidth(timeRange: string = '7d', bucket?: number, start?: string, end?: string) {
+    const params = new URLSearchParams();
+    if (start && end) {
+      params.set('start', start);
+      params.set('end', end);
+    } else {
+      params.set('range', timeRange);
+    }
+    if (bucket !== undefined) {
+      params.set('bucket', String(bucket));
+    }
+    return this.request<{
+      data: Array<{
+        timestamp: string;
+        bandwidth_bps: number;
+        total_packets: number;
+        total_bytes: number;
+      }>;
+      start: string;
+      end: string;
+      bucket_minutes: number;
+      count: number;
+    }>(`/api/history/bandwidth?${params.toString()}`);
+  }
+
+  

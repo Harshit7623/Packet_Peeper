@@ -1,22 +1,33 @@
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, LineChart, Line, AreaChart, Area } from "recharts";
-import { Download, Share2, RefreshCw, TrendingUp, Activity, Zap, Shield, ArrowUp, ArrowDown, Wifi, Globe, Clock, AlertTriangle } from "lucide-react";
+import { Download, Share2, RefreshCw, TrendingUp, Activity, Zap, Shield, ArrowUp, ArrowDown, Wifi, Globe, Clock, AlertTriangle, CalendarIcon, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useMonitorStore } from "@/store/monitorStore";
 import { apiService } from "@/services/apiService";
 import { motion } from "framer-motion";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { DateRange } from "react-day-picker";
+import { cn } from "@/lib/utils";
+
+type TimeRangeOption = '1h' | '24h' | '7d' | '30d' | '90d' | 'custom';
 
 export default function TrafficAnalysis() {
   const { stats, packets, alerts, devices, setStats, setDevices, setAlerts } = useMonitorStore();
-  const [timeRange, setTimeRange] = useState('7d');
+  const [timeRange, setTimeRange] = useState<TimeRangeOption>('7d');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [bandwidthHistory, setBandwidthHistory] = useState<Array<{ time: string; bandwidth: number }>>([]);
   const [topTalkers, setTopTalkers] = useState<any[]>([]);
-  
+  const [dateRange, setDateRange] = useState<DateRange | undefined>();
+  const [historyTimeseries, setHistoryTimeseries] = useState<any[]>([]);
+  const [historySummary, setHistorySummary] = useState<any>(null);
+  const [historyProtocols, setHistoryProtocols] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   const tcpPackets = stats?.tcpPackets || stats?.tcp || 0;
   const udpPackets = stats?.udpPackets || stats?.udp || 0;
   const icmpPackets = stats?.icmpPackets || stats?.icmp || 0;
@@ -25,7 +36,6 @@ export default function TrafficAnalysis() {
   const dnsPackets = stats?.dnsPackets || stats?.dns || 0;
   const totalPackets = stats?.totalPackets || stats?.total_packets || tcpPackets + udpPackets + icmpPackets || 0;
 
-  // Calculate real metrics
   const securityScore = useMemo(() => {
     const criticalAlerts = alerts.filter(a => a.severity === 'critical').length;
     const highAlerts = alerts.filter(a => a.severity === 'high').length;
@@ -40,6 +50,39 @@ export default function TrafficAnalysis() {
     return { status: 'At Risk', color: 'text-red-500' };
   }, [totalPackets, securityScore]);
 
+  const loadHistoricalData = useCallback(async (range: string, start?: string, end?: string) => {
+    setIsLoadingHistory(true);
+    try {
+      const [tsResult, summaryResult, protoResult] = await Promise.allSettled([
+        apiService.getHistoryTimeseries(range, undefined, start, end),
+        apiService.getHistorySummary(range, start, end),
+        apiService.getHistoryProtocols(range, undefined, start, end),
+      ]);
+      if (tsResult.status === 'fulfilled' && tsResult.value?.data) {
+        setHistoryTimeseries(tsResult.value.data);
+      } else {
+        setHistoryTimeseries([]);
+      }
+      if (summaryResult.status === 'fulfilled' && summaryResult.value) {
+        setHistorySummary(summaryResult.value);
+      } else {
+        setHistorySummary(null);
+      }
+      if (protoResult.status === 'fulfilled' && protoResult.value?.data) {
+        setHistoryProtocols(protoResult.value.data);
+      } else {
+        setHistoryProtocols([]);
+      }
+    } catch (err) {
+      console.error('Historical data fetch failed:', err);
+      setHistoryTimeseries([]);
+      setHistorySummary(null);
+      setHistoryProtocols([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -47,27 +90,37 @@ export default function TrafficAnalysis() {
         apiService.getStats(),
         apiService.getDevices(),
         apiService.getAlerts(),
-        apiService.getTrafficFlow(timeRange === '24h' ? 24 * 60 : timeRange === '7d' ? 7 * 24 * 60 : 30 * 24 * 60),
+        apiService.getTrafficFlow(timeRange === '1h' ? 60 : timeRange === '24h' ? 24 * 60 : timeRange === '7d' ? 7 * 24 * 60 : 30 * 24 * 60),
         apiService.getTopTalkers(5),
       ]);
 
       if (statsResult.status === 'fulfilled') {
         setStats(statsResult.value);
       }
-      if (devicesResult.status === 'fulfilled') {
-        setDevices(devicesResult.value);
+        if (devicesResult.status === 'fulfilled') {
+          setDevices(devicesResult.value.data ?? devicesResult.value);
+        }
+        if (alertsResult.status === 'fulfilled') {
+          setAlerts(alertsResult.value.data ?? alertsResult.value);
       }
-      if (alertsResult.status === 'fulfilled') {
-        setAlerts(alertsResult.value);
-      }
-      if (flowResult.status === 'fulfilled' && flowResult.value?.data) {
-        setBandwidthHistory(flowResult.value.data.map((d: any) => ({
-          time: d.time_label,
-          bandwidth: d.bytes / 1024 / 1024,
-        })));
+if (flowResult.status === 'fulfilled' && flowResult.value?.flow) {
+      setBandwidthHistory(flowResult.value.flow.map((d: any) => ({
+        time: d.time_label,
+        bandwidth: d.bytes / 1024 / 1024,
+      })));
       }
       if (talkersResult.status === 'fulfilled') {
         setTopTalkers(talkersResult.value || []);
+      }
+
+      if (timeRange === 'custom' && dateRange?.from && dateRange?.to) {
+        await loadHistoricalData(
+          '24h',
+          dateRange.from.toISOString(),
+          dateRange.to.toISOString(),
+        );
+      } else {
+        await loadHistoricalData(timeRange);
       }
     } catch (err) {
       console.error('Refresh failed:', err);
@@ -80,18 +133,27 @@ export default function TrafficAnalysis() {
     let isMounted = true;
     const loadHistory = async () => {
       try {
-        const hours = timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : 720;
-        const [result, talkersResult] = await Promise.all([
-          apiService.getBandwidthHistory(hours),
-          apiService.getTopTalkers(5),
-        ]);
-        if (!isMounted) return;
-        const mapped = result.map((entry: any) => ({
-          time: new Date(entry.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
-          bandwidth: Math.round((entry.bandwidth || 0) / 1024 / 1024),
-        }));
-        setBandwidthHistory(mapped);
-        setTopTalkers(talkersResult || []);
+        if (timeRange === 'custom' && dateRange?.from && dateRange?.to) {
+          const start = dateRange.from.toISOString();
+          const end = dateRange.to.toISOString();
+          await loadHistoricalData('24h', start, end);
+          setBandwidthHistory([]);
+          setTopTalkers([]);
+        } else {
+          const hours = timeRange === '1h' ? 1 : timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : timeRange === '30d' ? 720 : 2160;
+          const [result, talkersResult] = await Promise.all([
+            apiService.getBandwidthHistory(hours),
+            apiService.getTopTalkers(5),
+          ]);
+          if (!isMounted) return;
+          const mapped = result.map((entry: any) => ({
+            time: new Date(entry.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
+            bandwidth: Math.round((entry.bandwidth || 0) / 1024 / 1024),
+          }));
+          setBandwidthHistory(mapped);
+          setTopTalkers(talkersResult || []);
+          await loadHistoricalData(timeRange);
+        }
       } catch (err) {
         console.error('Bandwidth history fetch failed:', err);
         if (isMounted) {
@@ -104,7 +166,7 @@ export default function TrafficAnalysis() {
     return () => {
       isMounted = false;
     };
-  }, [timeRange]);
+  }, [timeRange, dateRange, loadHistoricalData]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -117,14 +179,32 @@ export default function TrafficAnalysis() {
     }
   };
 
+  const handleTimeRangeChange = (range: TimeRangeOption) => {
+    if (range !== 'custom') {
+      setDateRange(undefined);
+    }
+    setTimeRange(range);
+  };
+
   const trafficTimeline = useMemo(() => {
+    if (timeRange === 'custom' && historyTimeseries.length > 0) {
+      return historyTimeseries.map((row: any) => ({
+        time: new Date(row.window_start).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
+        bandwidth: Math.round((row.bandwidth_bps || 0) / 1024 / 1024),
+        tcp: row.tcp_packets,
+        udp: row.udp_packets,
+        icmp: row.icmp_packets,
+      }));
+    }
     if (bandwidthHistory.length > 0) {
       return bandwidthHistory;
     }
     if (packets.length === 0) return [];
 
     const now = Date.now();
-    const rangeMs = timeRange === '24h'
+    const rangeMs = timeRange === '1h'
+      ? 60 * 60 * 1000
+      : timeRange === '24h'
       ? 24 * 60 * 60 * 1000
       : timeRange === '7d'
       ? 7 * 24 * 60 * 60 * 1000
@@ -137,7 +217,7 @@ export default function TrafficAnalysis() {
 
     const buckets = Array.from({ length: bucketCount }, (_, index) => {
       const bucketStart = new Date(startTime + index * bucketSize);
-      const label = timeRange === '24h'
+      const label = timeRange === '1h' || timeRange === '24h'
         ? bucketStart.toLocaleTimeString([], { hour: '2-digit' })
         : bucketStart.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
@@ -178,9 +258,8 @@ export default function TrafficAnalysis() {
     });
 
     return buckets;
-  }, [bandwidthHistory, devices, packets, timeRange]);
+  }, [bandwidthHistory, devices, packets, timeRange, historyTimeseries]);
 
-  // Protocol distribution with real data
   const protocolData = useMemo(() => {
     const total = tcpPackets + udpPackets + icmpPackets || 1;
     return [
@@ -190,7 +269,6 @@ export default function TrafficAnalysis() {
     ].filter(p => p.count > 0);
   }, [tcpPackets, udpPackets, icmpPackets]);
 
-  // Application layer breakdown
   const appLayerData = useMemo(() => {
     const data = [] as Array<{ name: string; value: number; color: string }>;
     if (httpPackets > 0) data.push({ name: 'HTTP', value: httpPackets, color: '#f59e0b' });
@@ -201,7 +279,6 @@ export default function TrafficAnalysis() {
     return data;
   }, [httpPackets, httpsPackets, dnsPackets, totalPackets]);
 
-  // Top connections (based on packets)
   const topConnections = useMemo(() => {
     const source = topTalkers.length > 0 ? topTalkers : devices;
     if (source.length === 0) {
@@ -214,10 +291,29 @@ export default function TrafficAnalysis() {
     }));
   }, [devices, topTalkers]);
 
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const timeRangeLabels: Record<TimeRangeOption, string> = {
+    '1h': '1 Hour',
+    '24h': '24 Hours',
+    '7d': '7 Days',
+    '30d': '30 Days',
+    '90d': '90 Days',
+    'custom': 'Custom',
+  };
+
+  const presetRanges: TimeRangeOption[] = ['1h', '24h', '7d', '30d', '90d', 'custom'];
+
   return (
     <MainLayout>
       <div className="space-y-6">
-        <motion.div 
+        <motion.div
           className="flex flex-col md:flex-row md:items-center justify-between gap-4"
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -233,29 +329,74 @@ export default function TrafficAnalysis() {
               Understand your network usage patterns
             </p>
           </div>
-          <motion.div 
-            className="flex gap-2"
+          <motion.div
+            className="flex gap-2 flex-wrap items-center"
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            <div className="flex bg-card border border-border rounded-full p-1">
-              {['24h', '7d', '30d'].map((range) => (
-                <Button 
-                  key={range}
-                  variant={timeRange === range ? 'default' : 'ghost'}
-                  size="sm"
-                  className="rounded-full text-xs"
-                  onClick={() => setTimeRange(range)}
-                >
-                  {range === '24h' ? '24 Hours' : range === '7d' ? '7 Days' : '30 Days'}
-                </Button>
+            <div className="flex bg-card border border-border rounded-full p-1 gap-0.5">
+              {presetRanges.map((range) => (
+                range === 'custom' ? (
+                  <Popover key="custom">
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={timeRange === 'custom' ? 'default' : 'ghost'}
+                        size="sm"
+                        className="rounded-full text-xs gap-1"
+                      >
+                        <CalendarIcon size={12} />
+                        Custom
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="end">
+                      <Calendar
+                        mode="range"
+                        selected={dateRange}
+                        onSelect={(range) => {
+                          setDateRange(range);
+                          if (range?.from) {
+                            setTimeRange('custom');
+                          }
+                        }}
+                        numberOfMonths={2}
+                      />
+                      {dateRange?.from && (
+                        <div className="px-3 pb-3 pt-1 border-t border-border">
+                          <p className="text-xs text-muted-foreground">
+                            {dateRange.from.toLocaleDateString()}
+                            {dateRange.to ? ` – ${dateRange.to.toLocaleDateString()}` : ' – ...'}
+                          </p>
+                          {dateRange?.from && dateRange?.to && (
+                            <Button
+                              size="sm"
+                              className="mt-2 w-full rounded-full"
+                              onClick={() => setTimeRange('custom')}
+                            >
+                              Apply Range
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <Button
+                    key={range}
+                    variant={timeRange === range ? 'default' : 'ghost'}
+                    size="sm"
+                    className="rounded-full text-xs"
+                    onClick={() => handleTimeRangeChange(range)}
+                  >
+                    {timeRangeLabels[range]}
+                  </Button>
+                )
               ))}
             </div>
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-              <Button 
-                variant="outline" 
-                size="icon" 
+              <Button
+                variant="outline"
+                size="icon"
                 className="rounded-full hover:border-primary/50 transition-all"
                 onClick={handleRefresh}
                 disabled={isRefreshing}
@@ -264,9 +405,9 @@ export default function TrafficAnalysis() {
               </Button>
             </motion.div>
             <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-              <Button 
-                variant="outline" 
-                size="icon" 
+              <Button
+                variant="outline"
+                size="icon"
                 className="rounded-full hover:border-primary/50 transition-all"
                 onClick={handleExport}
                 disabled={isExporting}
@@ -277,72 +418,200 @@ export default function TrafficAnalysis() {
           </motion.div>
         </motion.div>
 
-        {/* Key Metrics Row */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-            <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Traffic Health</p>
-                    <p className={`text-2xl font-bold ${trafficHealth.color}`}>{trafficHealth.status}</p>
+        {/* Historical Summary Cards (from /api/history/summary) */}
+        {historySummary && (
+          <div className="grid gap-4 md:grid-cols-4">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Packets</p>
+                      <p className="text-2xl font-bold text-foreground">{(historySummary.total_packets || 0).toLocaleString()}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Activity size={20} className="text-primary" />
+                    </div>
                   </div>
-                  <div className={`p-2 rounded-lg ${securityScore >= 80 ? 'bg-emerald-500/10' : securityScore >= 50 ? 'bg-amber-500/10' : 'bg-red-500/10'}`}>
-                    <Shield size={20} className={trafficHealth.color} />
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Data</p>
+                      <p className="text-2xl font-bold text-foreground">{formatBytes(historySummary.total_bytes || 0)}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-cyan-500/10">
+                      <Globe size={20} className="text-cyan-400" />
+                    </div>
                   </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Avg Bandwidth</p>
+                      <p className="text-2xl font-bold text-foreground">{Math.round((historySummary.avg_bandwidth_bps || 0) / 1024)} KB/s</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-emerald-500/10">
+                      <TrendingUp size={20} className="text-emerald-400" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Alerts in Range</p>
+                      <p className="text-2xl font-bold text-foreground">{(historySummary.total_alerts || 0).toLocaleString()}</p>
+                    </div>
+                    <div className={`p-2 rounded-lg ${(historySummary.total_alerts || 0) > 5 ? 'bg-amber-500/10' : 'bg-emerald-500/10'}`}>
+                      <AlertTriangle size={20} className={(historySummary.total_alerts || 0) > 5 ? 'text-amber-400' : 'text-emerald-400'} />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Default Key Metrics Row (when no history summary) */}
+        {!historySummary && (
+          <div className="grid gap-4 md:grid-cols-4">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Traffic Health</p>
+                      <p className={`text-2xl font-bold ${trafficHealth.color}`}>{trafficHealth.status}</p>
+                    </div>
+                    <div className={`p-2 rounded-lg ${securityScore >= 80 ? 'bg-emerald-500/10' : securityScore >= 50 ? 'bg-amber-500/10' : 'bg-red-500/10'}`}>
+                      <Shield size={20} className={trafficHealth.color} />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Analyzed</p>
+                      <p className="text-2xl font-bold text-foreground">{totalPackets.toLocaleString()}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Activity size={20} className="text-primary" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Active Devices</p>
+                      <p className="text-2xl font-bold text-foreground">{devices.length}</p>
+                    </div>
+                    <div className="p-2 rounded-lg bg-cyan-500/10">
+                      <Wifi size={20} className="text-cyan-400" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+              <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider">Security Events</p>
+                      <p className="text-2xl font-bold text-foreground">{alerts.length}</p>
+                    </div>
+                    <div className={`p-2 rounded-lg ${alerts.length > 5 ? 'bg-amber-500/10' : 'bg-emerald-500/10'}`}>
+                      <AlertTriangle size={20} className={alerts.length > 5 ? 'text-amber-400' : 'text-emerald-400'} />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Historical Protocol Trend (stacked area) */}
+        {historyProtocols.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.25 }}
+          >
+            <Card className="bg-card/40 border-border/50 rounded-2xl overflow-hidden shadow-xl hover:shadow-2xl transition-all">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-xl flex items-center gap-2">
+                  <BarChart3 className="text-primary" />
+                  Protocol Trend
+                </CardTitle>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[#00d4ff]" /> TCP</span>
+                  <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[#ff6b35]" /> UDP</span>
+                  <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-[#10b981]" /> ICMP</span>
                 </div>
+              </CardHeader>
+              <CardContent className="h-65">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={historyProtocols.map((row: any) => ({
+                    time: new Date(row.window_start).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' }),
+                    tcp: row.tcp,
+                    udp: row.udp,
+                    icmp: row.icmp,
+                  }))}>
+                    <defs>
+                      <linearGradient id="histTcpGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#00d4ff" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#00d4ff" stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="histUdpGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ff6b35" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#ff6b35" stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="histIcmpGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis hide />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px' }}
+                      formatter={(value: number, name: string) => [value.toLocaleString() + ' packets', name.toUpperCase()]}
+                    />
+                    <Area type="monotone" dataKey="tcp" stackId="1" stroke="#00d4ff" fill="url(#histTcpGrad)" strokeWidth={1.5} />
+                    <Area type="monotone" dataKey="udp" stackId="1" stroke="#ff6b35" fill="url(#histUdpGrad)" strokeWidth={1.5} />
+                    <Area type="monotone" dataKey="icmp" stackId="1" stroke="#10b981" fill="url(#histIcmpGrad)" strokeWidth={1.5} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </CardContent>
             </Card>
           </motion.div>
-          
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-            <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Analyzed</p>
-                    <p className="text-2xl font-bold text-foreground">{totalPackets.toLocaleString()}</p>
-                  </div>
-                  <div className="p-2 rounded-lg bg-primary/10">
-                    <Activity size={20} className="text-primary" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-          
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-            <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Active Devices</p>
-                    <p className="text-2xl font-bold text-foreground">{devices.length}</p>
-                  </div>
-                  <div className="p-2 rounded-lg bg-cyan-500/10">
-                    <Wifi size={20} className="text-cyan-400" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-          
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-            <Card className="bg-card/40 border-border/50 rounded-xl hover:border-primary/30 transition-all">
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Security Events</p>
-                    <p className="text-2xl font-bold text-foreground">{alerts.length}</p>
-                  </div>
-                  <div className={`p-2 rounded-lg ${alerts.length > 5 ? 'bg-amber-500/10' : 'bg-emerald-500/10'}`}>
-                    <AlertTriangle size={20} className={alerts.length > 5 ? 'text-amber-400' : 'text-emerald-400'} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </div>
+        )}
 
         <div className="grid gap-6 md:grid-cols-3">
           {/* Traffic Timeline - Inbound/Outbound */}
@@ -437,7 +706,7 @@ export default function TrafficAnalysis() {
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
-                      <Tooltip 
+                      <Tooltip
                         contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
                         formatter={(value: number, name: string) => [`${value}%`, name]}
                       />
@@ -446,8 +715,8 @@ export default function TrafficAnalysis() {
                 </div>
                 <div className="space-y-2">
                   {protocolData.map((protocol, i) => (
-                    <motion.div 
-                      key={protocol.name} 
+                    <motion.div
+                      key={protocol.name}
                       className="flex items-center justify-between group cursor-pointer p-2 rounded-lg hover:bg-muted/30 transition-all"
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
@@ -498,7 +767,7 @@ export default function TrafficAnalysis() {
                           <span className="text-muted-foreground">{app.value.toLocaleString()} packets</span>
                         </div>
                         <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                          <motion.div 
+                          <motion.div
                             className="h-full rounded-full"
                             style={{ backgroundColor: app.color }}
                             initial={{ width: 0 }}
@@ -535,7 +804,7 @@ export default function TrafficAnalysis() {
                 ) : (
                   <div className="space-y-3">
                     {topConnections.map((conn, i) => (
-                      <motion.div 
+                      <motion.div
                         key={i}
                         className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/30 transition-all"
                         initial={{ opacity: 0, x: -10 }}
@@ -563,6 +832,55 @@ export default function TrafficAnalysis() {
             </Card>
           </motion.div>
         </div>
+
+        {/* Historical Bandwidth Chart (from timeseries API) */}
+        {historyTimeseries.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.7 }}
+          >
+            <Card className="bg-card/40 border-border/50 rounded-2xl overflow-hidden shadow-xl hover:shadow-2xl transition-all">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-xl flex items-center gap-2">
+                  <Clock className="text-primary" />
+                  Historical Bandwidth
+                </CardTitle>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <span>1-min resolution</span>
+                </div>
+              </CardHeader>
+              <CardContent className="h-65">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={historyTimeseries.map((row: any) => ({
+                    time: new Date(row.window_start).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    bandwidth: Math.round((row.bandwidth_bps || 0) / 1024),
+                    packets: row.total_packets,
+                    bytes: row.total_bytes,
+                  }))}>
+                    <defs>
+                      <linearGradient id="histBwGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis hide />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '12px' }}
+                      formatter={(value: number, name: string) => {
+                        if (name === 'bandwidth') return [`${value} KB/s`, 'Bandwidth'];
+                        if (name === 'packets') return [value.toLocaleString(), 'Packets'];
+                        return [value, name];
+                      }}
+                    />
+                    <Area type="monotone" dataKey="bandwidth" stroke="#8b5cf6" fill="url(#histBwGrad)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
       </div>
     </MainLayout>
   );

@@ -139,12 +139,12 @@ function AppContent() {
           return;
         }
 
-        if (results[0].status === 'fulfilled') {
-          useMonitorStore.getState().setAlerts(results[0].value);
-        }
-        if (results[1].status === 'fulfilled') {
-          useMonitorStore.getState().setDevices(results[1].value);
-        }
+      if (results[0].status === 'fulfilled') {
+        useMonitorStore.getState().setAlerts(results[0].value.data ?? results[0].value);
+      }
+      if (results[1].status === 'fulfilled') {
+        useMonitorStore.getState().setDevices(results[1].value.data ?? results[1].value);
+      }
         if (results[2].status === 'fulfilled') {
           useMonitorStore.getState().setStats(results[2].value);
         }
