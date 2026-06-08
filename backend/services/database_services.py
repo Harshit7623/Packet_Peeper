@@ -7,7 +7,7 @@ Supports both PostgreSQL and SQLite
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, and_, or_, func, Index
 try:
     from sqlalchemy.orm import declarative_base
@@ -380,22 +380,29 @@ class DatabaseService:
             logger.error(f"Error saving packet: {str(e)}")
             return False
     
-    def get_packets(self, 
-                   start_time: Optional[datetime] = None,
-                   end_time: Optional[datetime] = None,
-                   protocol: Optional[str] = None,
-                   src_ip: Optional[str] = None,
-                   dst_ip: Optional[str] = None,
-                   limit: int = 1000) -> List[Dict]:
-        """Retrieve packets with optional filtering"""
+    def get_packets(self,
+                    start_time: Optional[datetime] = None,
+                    end_time: Optional[datetime] = None,
+                    protocol: Optional[str] = None,
+                    src_ip: Optional[str] = None,
+                    dst_ip: Optional[str] = None,
+                    src_port: Optional[int] = None,
+                    dst_port: Optional[int] = None,
+                    service: Optional[str] = None,
+                    tcp_flags: Optional[int] = None,
+                    min_length: Optional[int] = None,
+                    max_length: Optional[int] = None,
+                    search: Optional[str] = None,
+                    limit: int = 1000,
+                    offset: int = 0) -> Tuple[List[Dict], int]:
+        """Retrieve packets with advanced filtering. Returns (records, total_count)."""
         if not self.SessionLocal:
-            return []
-        
+            return [], 0
+
         try:
             with self.get_session() as session:
                 query = session.query(PacketRecord)
-                
-                # Apply filters
+
                 if start_time:
                     query = query.filter(PacketRecord.timestamp >= start_time)
                 if end_time:
@@ -403,57 +410,39 @@ class DatabaseService:
                 if protocol:
                     query = query.filter(PacketRecord.protocol == protocol)
                 if src_ip:
-                    query = query.filter(PacketRecord.src_ip == src_ip)
+                    query = query.filter(PacketRecord.src_ip.like(f'%{src_ip}%'))
                 if dst_ip:
-                    query = query.filter(PacketRecord.dst_ip == dst_ip)
-                
-                # Sort by timestamp desc and apply limit
-                packets = query.order_by(PacketRecord.timestamp.desc()).limit(limit).all()
-                return [p.to_dict() for p in packets]
-        
+                    query = query.filter(PacketRecord.dst_ip.like(f'%{dst_ip}%'))
+                if src_port is not None:
+                    query = query.filter(PacketRecord.src_port == src_port)
+                if dst_port is not None:
+                    query = query.filter(PacketRecord.dst_port == dst_port)
+                if service:
+                    query = query.filter(PacketRecord.service.like(f'%{service}%'))
+                if tcp_flags is not None:
+                    query = query.filter(PacketRecord.tcp_flags == tcp_flags)
+                if min_length is not None:
+                    query = query.filter(PacketRecord.length >= min_length)
+                if max_length is not None:
+                    query = query.filter(PacketRecord.length <= max_length)
+                if search:
+                    search_pattern = f'%{search}%'
+                    query = query.filter(
+                        or_(
+                            PacketRecord.src_ip.like(search_pattern),
+                            PacketRecord.dst_ip.like(search_pattern),
+                            PacketRecord.protocol.like(search_pattern),
+                            PacketRecord.service.like(search_pattern),
+                        )
+                    )
+
+                total = query.count()
+                packets = query.order_by(PacketRecord.timestamp.desc()).offset(offset).limit(limit).all()
+                return [p.to_dict() for p in packets], total
+
         except Exception as e:
             logger.error(f"Error retrieving packets: {str(e)}")
-            return []
-    
-    # ============== ALERT OPERATIONS ==============
-    
-    def save_alert(self, alert_info: Dict) -> bool:
-        """Save a security alert to the database"""
-        if not self.SessionLocal:
-            return False
-        
-        try:
-            with self.get_session() as session:
-                alert = AlertRecord(
-                    alert_type=alert_info.get('type'),
-                    severity=alert_info.get('severity', 'medium'),
-                    source_ip=alert_info.get('source_ip') or alert_info.get('source'),
-                    destination_ip=alert_info.get('destination_ip') or alert_info.get('destination'),
-                    title=alert_info.get('title'),
-                    description=alert_info.get('description'),
-                    evidence=json.dumps(alert_info.get('evidence', {})),
-                )
-                session.add(alert)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving alert: {str(e)}")
-            return False
-    
-    def dismiss_alert(self, alert_id: int) -> bool:
-        """Mark an alert as resolved/dismissed"""
-        if not self.SessionLocal:
-            return False
-        
-        try:
-            with self.get_session() as session:
-                alert = session.query(AlertRecord).filter_by(id=alert_id).first()
-                if alert:
-                    alert.resolved = True
-                    return True
-                return False
-        except Exception as e:
-            logger.error(f"Error dismissing alert: {str(e)}")
-            return False
+            return [], 0
     
     # ============== ALERT OPERATIONS ==============
     
@@ -499,32 +488,72 @@ class DatabaseService:
                    start_time: Optional[datetime] = None,
                    end_time: Optional[datetime] = None,
                    severity: Optional[str] = None,
+                   alert_type: Optional[str] = None,
+                   source_ip: Optional[str] = None,
+                   destination_ip: Optional[str] = None,
+                   title: Optional[str] = None,
                    resolved: Optional[bool] = None,
-                   limit: int = 100) -> List[Dict]:
-        """Retrieve alerts with optional filtering"""
+                   search: Optional[str] = None,
+                   limit: int = 100,
+                   offset: int = 0) -> Tuple[List[Dict], int]:
+        """Retrieve alerts with advanced filtering. Returns (records, total_count)."""
         if not self.SessionLocal:
-            return []
-        
+            return [], 0
+
         try:
             with self.get_session() as session:
                 query = session.query(AlertRecord)
-                
+
                 if start_time:
                     query = query.filter(AlertRecord.timestamp >= start_time)
                 if end_time:
                     query = query.filter(AlertRecord.timestamp <= end_time)
                 if severity:
                     query = query.filter(AlertRecord.severity == severity)
+                if alert_type:
+                    query = query.filter(AlertRecord.alert_type == alert_type)
+                if source_ip:
+                    query = query.filter(AlertRecord.source_ip.like(f'%{source_ip}%'))
+                if destination_ip:
+                    query = query.filter(AlertRecord.destination_ip.like(f'%{destination_ip}%'))
+                if title:
+                    query = query.filter(AlertRecord.title.like(f'%{title}%'))
                 if resolved is not None:
                     query = query.filter(AlertRecord.resolved == resolved)
-                
-                alerts = query.order_by(AlertRecord.timestamp.desc()).limit(limit).all()
-                return [a.to_dict() for a in alerts]
-        
+                if search:
+                    search_pattern = f'%{search}%'
+                    query = query.filter(
+                        or_(
+                            AlertRecord.title.like(search_pattern),
+                            AlertRecord.description.like(search_pattern),
+                            AlertRecord.source_ip.like(search_pattern),
+                            AlertRecord.destination_ip.like(search_pattern),
+                            AlertRecord.alert_type.like(search_pattern),
+                        )
+                    )
+
+                total = query.count()
+                alerts = query.order_by(AlertRecord.timestamp.desc()).offset(offset).limit(limit).all()
+                return [a.to_dict() for a in alerts], total
+
         except Exception as e:
             logger.error(f"Error retrieving alerts: {str(e)}")
-            return []
+            return [], 0
     
+    def clear_alerts(self) -> bool:
+        """Delete all alerts from database"""
+        if not self.SessionLocal:
+            return False
+
+        try:
+            with self.get_session() as session:
+                session.query(AlertRecord).delete()
+                logger.info("All alerts cleared from database")
+                return True
+        except Exception as e:
+            logger.error(f"Error clearing alerts from database: {str(e)}")
+            return False
+
     # ============== TRAFFIC STATISTICS OPERATIONS ==============
 
     def save_traffic_stats(self, stats: Dict) -> bool:
@@ -634,20 +663,48 @@ class DatabaseService:
             logger.error(f"Error updating device: {str(e)}")
             return False
     
-    def get_devices(self, limit: int = 1000) -> List[Dict]:
-        """Retrieve all tracked devices"""
+    def get_devices(self,
+                    ip_address: Optional[str] = None,
+                    mac_address: Optional[str] = None,
+                    hostname: Optional[str] = None,
+                    device_type: Optional[str] = None,
+                    search: Optional[str] = None,
+                    limit: int = 1000,
+                    offset: int = 0) -> Tuple[List[Dict], int]:
+        """Retrieve tracked devices with filtering. Returns (records, total_count)."""
         if not self.SessionLocal:
-            return []
-        
+            return [], 0
+
         try:
             with self.get_session() as session:
-                devices = session.query(DeviceRecord).order_by(
-                    DeviceRecord.last_seen.desc()
-                ).limit(limit).all()
-                return [d.to_dict() for d in devices]
+                query = session.query(DeviceRecord)
+
+                if ip_address:
+                    query = query.filter(DeviceRecord.ip_address.like(f'%{ip_address}%'))
+                if mac_address:
+                    query = query.filter(DeviceRecord.mac_address.like(f'%{mac_address}%'))
+                if hostname:
+                    query = query.filter(DeviceRecord.hostname.like(f'%{hostname}%'))
+                if device_type:
+                    query = query.filter(DeviceRecord.device_type == device_type)
+                if search:
+                    search_pattern = f'%{search}%'
+                    query = query.filter(
+                        or_(
+                            DeviceRecord.ip_address.like(search_pattern),
+                            DeviceRecord.mac_address.like(search_pattern),
+                            DeviceRecord.hostname.like(search_pattern),
+                            DeviceRecord.device_type.like(search_pattern),
+                        )
+                    )
+
+                total = query.count()
+                devices = query.order_by(DeviceRecord.last_seen.desc()).offset(offset).limit(limit).all()
+                return [d.to_dict() for d in devices], total
+
         except Exception as e:
             logger.error(f"Error retrieving devices: {str(e)}")
-            return []
+            return [], 0
     
     # ============== TRAFFIC FEATURE (1-min) OPERATIONS ==============
 

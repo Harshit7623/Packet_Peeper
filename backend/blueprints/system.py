@@ -289,9 +289,9 @@ def generate_report():
         devices = []
 
         if ext.db_service and FEATURES['persistent_storage']:
-            packets = ext.db_service.get_packets(limit=10000)
-            alerts_list = ext.db_service.get_alerts(limit=1000)
-            devices = ext.db_service.get_devices()
+            packets, _ = ext.db_service.get_packets(limit=10000)
+            alerts_list, _ = ext.db_service.get_alerts(limit=1000)
+            devices, _ = ext.db_service.get_devices()
         elif ext.sniffer:
             packets = list(ext.sniffer.captured_packets[-10000:]) if ext.sniffer.captured_packets else []
             with ext.alerts_lock:

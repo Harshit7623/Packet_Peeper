@@ -1,6 +1,6 @@
 """
 Devices Blueprint
-Handles device listing and network scanning.
+Handles device listing, filtering, and network scanning.
 """
 
 import logging
@@ -26,11 +26,29 @@ def get_devices():
                         ext.db_service.update_device(device)
                     except Exception as e:
                         logger.debug(f"DB update failed for device {device.get('ip_address')}: {e}")
-            return jsonify(devices)
-        return jsonify([])
+
+            ip_address = request.args.get('ip')
+            mac_address = request.args.get('mac')
+            hostname = request.args.get('hostname')
+            device_type = request.args.get('device_type')
+            search = request.args.get('search')
+
+            if any([ip_address, mac_address, hostname, device_type, search]):
+                if ext.db_service and FEATURES['persistent_storage']:
+                    filtered, total = ext.db_service.get_devices(
+                        ip_address=ip_address,
+                        mac_address=mac_address,
+                        hostname=hostname,
+                        device_type=device_type,
+                        search=search,
+                    )
+                    return jsonify({'data': filtered, 'total': total})
+
+            return jsonify({'data': devices, 'total': len(devices)})
+        return jsonify({'data': [], 'total': 0})
     except Exception as e:
         logger.error(f"Error retrieving devices: {str(e)}")
-        return jsonify([]), 200
+        return jsonify({'data': [], 'total': 0}), 200
 
 
 @bp.route('/network/scan', methods=['POST'])

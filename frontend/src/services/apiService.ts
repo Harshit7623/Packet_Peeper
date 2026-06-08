@@ -261,18 +261,55 @@ class ApiService {
 
   // ==================== Packets ====================
 
-  async getPackets(limit: number = 1000) {
-    return this.request<any[]>(`/api/packets?limit=${limit}`);
+  async getPackets(params: {
+    limit?: number;
+    offset?: number;
+    start?: string;
+    end?: string;
+    protocol?: string;
+    src_ip?: string;
+    dst_ip?: string;
+    src_port?: number;
+    dst_port?: number;
+    service?: string;
+    tcp_flags?: number;
+    min_length?: number;
+    max_length?: number;
+    search?: string;
+  } = {}) {
+    const { limit = 1000, offset = 0, ...rest } = params;
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    Object.entries(rest).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') query.set(k, String(v));
+    });
+    return this.request<{ data: any[]; total: number; limit: number; offset: number }>(`/api/packets?${query}`);
   }
 
   // ==================== Alerts ====================
 
-  async getAlerts(limit: number = 100) {
-    return this.request<any[]>(`/api/alerts?limit=${limit}`);
+  async getAlerts(params: {
+    limit?: number;
+    offset?: number;
+    start?: string;
+    end?: string;
+    severity?: string;
+    alert_type?: string;
+    source_ip?: string;
+    destination_ip?: string;
+    title?: string;
+    resolved?: boolean;
+    search?: string;
+  } = {}) {
+    const { limit = 100, offset = 0, ...rest } = params;
+    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    Object.entries(rest).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') query.set(k, String(v));
+    });
+    return this.request<{ data: any[]; total: number; limit: number; offset: number }>(`/api/alerts?${query}`);
   }
 
   async getSecurityAlerts(limit: number = 100) {
-    return this.request<any[]>(`/api/security_alerts?limit=${limit}`);
+    return this.request<{ data: any[]; total: number }>(`/api/security_alerts?limit=${limit}`);
   }
 
   async dismissAlert(alertId: number) {
@@ -285,12 +322,29 @@ class ApiService {
 
   // ==================== Devices ====================
 
-  async getDevices() {
-    return this.request<any[]>('/api/devices');
+  async getDevices(params: {
+    ip?: string;
+    mac?: string;
+    hostname?: string;
+    device_type?: string;
+    search?: string;
+  } = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== '') query.set(k, String(v));
+    });
+    const qs = query.toString();
+    return this.request<{ data: any[]; total: number }>(`/api/devices${qs ? '?' + qs : ''}`);
   }
 
   async scanNetwork() {
     return this.request<{ message: string; scan_id?: string }>('/api/network/scan', { method: 'POST' });
+  }
+
+  // ==================== Search ====================
+
+  async search(query: string, limit: number = 20) {
+    return this.request<{ packets: any[]; alerts: any[]; devices: any[]; total: number }>(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
   }
 
   // ==================== Statistics ====================
@@ -469,95 +523,7 @@ class ApiService {
     return this.request<any[]>(`/api/analytics/bandwidth?hours=${hours}`);
   }
 
-  // ==================== AI Assistant ====================
-
-  async getAIRemediation(alert: any) {
-    // Longer timeout for AI requests (15 seconds)
-    return this.request<{
-      success: boolean;
-      explanation: string;
-      steps: string[];
-      severity_assessment: string;
-      estimated_risk: string;
-      technical_details?: string;
-      prevention_tips?: string[];
-      provider: string;
-      cached?: boolean;
-    }>('/api/ai/remediate', {
-      method: 'POST',
-      body: JSON.stringify(alert),
-    }, 15000);
-  }
-
-  async explainTerm(term: string) {
-    return this.request<{
-      term: string;
-      found: boolean;
-      simple: string;
-      analogy: string;
-      risk: string;
-    }>('/api/ai/explain', {
-      method: 'POST',
-      body: JSON.stringify({ term }),
-    });
-  }
-
-  async getNetworkHealthSummary() {
-    return this.request<{
-      status: string;
-      message: string;
-      action: string;
-      stats?: {
-        total_alerts: number;
-        critical: number;
-        high: number;
-        medium: number;
-      };
-    }>('/api/ai/health-summary');
-  }
-
-  async getAIStatus() {
-    return this.request<{
-      provider: string;
-      model?: string;
-      available: boolean;
-      cache_size?: number;
-      is_fallback?: boolean;
-      confidence?: string;
-      message?: string;
-      providers_available?: Record<string, boolean>;
-    }>('/api/ai/status');
-  }
-
-  // ==================== Detection Profile ====================
-
-  async getDetectionProfile() {
-    return this.request<{
-      current_profile: string;
-      available_profiles: string[];
-      current_thresholds?: Record<string, any>;
-      description?: Record<string, string>;
-    }>('/api/detection/profile');
-  }
-
-  async setDetectionProfile(profile: string) {
-    return this.request<{
-      message: string;
-      current_profile: string;
-      current_thresholds?: Record<string, any>;
-    }>('/api/detection/profile', {
-      method: 'POST',
-      body: JSON.stringify({ profile })
-    });
-  }
-}
-
-// Export singleton instance
-export const apiService = new ApiService();
-
-export default ApiService;
-
-// ==================== History / Historical Data ====================
+  // ==================== History / Historical Data ====================
 
   async getHistoryTimeseries(timeRange: string = '24h', bucket?: number, start?: string, end?: string) {
     const params = new URLSearchParams();
@@ -714,4 +680,90 @@ export default ApiService;
     }>(`/api/history/bandwidth?${params.toString()}`);
   }
 
-  
+  // ==================== AI Assistant ====================
+
+  async getAIRemediation(alert: any) {
+    // Longer timeout for AI requests (15 seconds)
+    return this.request<{
+      success: boolean;
+      explanation: string;
+      steps: string[];
+      severity_assessment: string;
+      estimated_risk: string;
+      technical_details?: string;
+      prevention_tips?: string[];
+      provider: string;
+      cached?: boolean;
+    }>('/api/ai/remediate', {
+      method: 'POST',
+      body: JSON.stringify(alert),
+    }, 15000);
+  }
+
+  async explainTerm(term: string) {
+    return this.request<{
+      term: string;
+      found: boolean;
+      simple: string;
+      analogy: string;
+      risk: string;
+    }>('/api/ai/explain', {
+      method: 'POST',
+      body: JSON.stringify({ term }),
+    });
+  }
+
+  async getNetworkHealthSummary() {
+    return this.request<{
+      status: string;
+      message: string;
+      action: string;
+      stats?: {
+        total_alerts: number;
+        critical: number;
+        high: number;
+        medium: number;
+      };
+    }>('/api/ai/health-summary');
+  }
+
+  async getAIStatus() {
+    return this.request<{
+      provider: string;
+      model?: string;
+      available: boolean;
+      cache_size?: number;
+      is_fallback?: boolean;
+      confidence?: string;
+      message?: string;
+      providers_available?: Record<string, boolean>;
+    }>('/api/ai/status');
+  }
+
+  // ==================== Detection Profile ====================
+
+  async getDetectionProfile() {
+    return this.request<{
+      current_profile: string;
+      available_profiles: string[];
+      current_thresholds?: Record<string, any>;
+      description?: Record<string, string>;
+    }>('/api/detection/profile');
+  }
+
+  async setDetectionProfile(profile: string) {
+    return this.request<{
+      message: string;
+      current_profile: string;
+      current_thresholds?: Record<string, any>;
+    }>('/api/detection/profile', {
+      method: 'POST',
+      body: JSON.stringify({ profile })
+    });
+  }
+}
+
+// Export singleton instance
+export const apiService = new ApiService();
+
+export default ApiService;

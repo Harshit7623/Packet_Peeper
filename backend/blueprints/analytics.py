@@ -1,10 +1,11 @@
 """
 Analytics Blueprint
-Handles analytics endpoints: protocol distribution, top talkers, bandwidth.
+Handles analytics, protocol distribution, top talkers, bandwidth, and traffic endpoints.
 """
 
+import datetime
+import time
 import logging
-from datetime import datetime, timedelta
 
 from flask import Blueprint, request, jsonify
 
@@ -15,54 +16,84 @@ import extensions as ext
 bp = Blueprint('analytics', __name__, url_prefix='/api')
 logger = logging.getLogger('packet_peeper')
 
+
 @bp.route('/analytics', methods=['GET'])
 def api_analytics():
     try:
         time_range = request.args.get('range', '24h')
-        hours = 24
-        if time_range == '7d':
-            hours = 168
-        elif time_range == '30d':
-            hours = 720
-        elif time_range == '1h':
-            hours = 1
-
-        stats = ext._collect_traffic_snapshot()
-        flow_data = []
-        if ext.db_service and FEATURES['persistent_storage']:
-            flow_data = ext.db_service.get_bandwidth_history(hours=hours)
-        elif hasattr(ext, 'bandwidth_history') and ext.bandwidth_history:
-            flow_data = list(ext.bandwidth_history)
-
-        return jsonify({
-            'timeRange': time_range,
-            'totalPackets': stats.get('totalPackets', 0),
-            'totalBytes': stats.get('totalBytes', 0),
-            'currentBandwidth': stats.get('currentBandwidth', 0),
-            'peakBandwidth': stats.get('peakBandwidth', 0),
-            'averageBandwidth': stats.get('averageBandwidth', 0),
-            'protocols': stats.get('protocols', {}),
-            'flow': flow_data[-120:] if flow_data else [],
-        })
-    except Exception as e:
-        logger.error(f"Error getting analytics: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-@bp.route('/analytics/protocols', methods=['GET'])
-def api_analytics_protocols():
-    try:
         if ext.sniffer:
             stats = ext.sniffer.get_statistics()
             return jsonify({
-                'TCP': stats.get('tcpPackets', 0),
-                'UDP': stats.get('udpPackets', 0),
-                'ICMP': stats.get('icmpPackets', 0),
+                'total_packets': stats.get('totalPackets', 0),
+                'protocols': {
+                    'TCP': stats.get('tcpPackets', 0),
+                    'UDP': stats.get('udpPackets', 0),
+                    'ICMP': stats.get('icmpPackets', 0),
+                    'Other': stats.get('otherPackets', 0),
+                },
+                'bandwidth': {
+                    'current': stats.get('currentBandwidth', 0),
+                    'peak': stats.get('peakBandwidth', 0),
+                    'average': stats.get('averageBandwidth', 0),
+                },
+                'time_range': time_range,
             })
-        return jsonify({'TCP': 0, 'UDP': 0, 'ICMP': 0})
+        if ext.db_service and FEATURES['persistent_storage']:
+            latest = ext.db_service.get_traffic_stats(limit=1)
+            if latest:
+                row = latest[0]
+                return jsonify({
+                    'total_packets': row.get('total_packets', 0),
+                    'protocols': {
+                        'TCP': row.get('tcp_packets', 0),
+                        'UDP': row.get('udp_packets', 0),
+                        'ICMP': row.get('icmp_packets', 0),
+                        'Other': 0,
+                    },
+                    'bandwidth': {
+                        'current': row.get('current_bandwidth', 0),
+                        'peak': row.get('peak_bandwidth', 0),
+                        'average': row.get('average_bandwidth', 0),
+                    },
+                    'time_range': time_range,
+                })
+        return jsonify({})
+    except Exception as e:
+        logger.error(f"Error getting analytics: {str(e)}")
+        return jsonify({}), 200
+
+
+@bp.route('/analytics/protocols', methods=['GET'])
+def api_protocol_distribution():
+    try:
+        if ext.sniffer:
+            stats = ext.sniffer.get_statistics()
+            total = stats.get('totalPackets', 1) or 1
+            return jsonify({
+                'distribution': [
+                    {'name': 'TCP', 'value': stats.get('tcpPackets', 0), 'percentage': round(stats.get('tcpPackets', 0) / total * 100, 2)},
+                    {'name': 'UDP', 'value': stats.get('udpPackets', 0), 'percentage': round(stats.get('udpPackets', 0) / total * 100, 2)},
+                    {'name': 'ICMP', 'value': stats.get('icmpPackets', 0), 'percentage': round(stats.get('icmpPackets', 0) / total * 100, 2)},
+                    {'name': 'Other', 'value': stats.get('otherPackets', 0), 'percentage': round(stats.get('otherPackets', 0) / total * 100, 2)},
+                ],
+            })
+        if ext.db_service and FEATURES['persistent_storage']:
+            latest = ext.db_service.get_traffic_stats(limit=1)
+            if latest:
+                row = latest[0]
+                total = row.get('total_packets', 1) or 1
+                return jsonify({
+                    'distribution': [
+                        {'name': 'TCP', 'value': row.get('tcp_packets', 0), 'percentage': round(row.get('tcp_packets', 0) / total * 100, 2)},
+                        {'name': 'UDP', 'value': row.get('udp_packets', 0), 'percentage': round(row.get('udp_packets', 0) / total * 100, 2)},
+                        {'name': 'ICMP', 'value': row.get('icmp_packets', 0), 'percentage': round(row.get('icmp_packets', 0) / total * 100, 2)},
+                        {'name': 'Other', 'value': 0, 'percentage': 0},
+                    ],
+                })
+        return jsonify({'distribution': []})
     except Exception as e:
         logger.error(f"Error getting protocol distribution: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'distribution': []}), 200
 
 
 @bp.route('/analytics/top-talkers', methods=['GET'])
@@ -71,7 +102,7 @@ def api_analytics_top_talkers():
         limit = request.args.get('limit', 10, type=int)
         devices = []
         if ext.db_service and FEATURES['persistent_storage']:
-            devices = ext.db_service.get_devices(limit=1000)
+            devices, _ = ext.db_service.get_devices(limit=1000)
         elif ext.sniffer:
             devices = ext._collect_device_snapshot()
 
@@ -87,83 +118,99 @@ def api_analytics_top_talkers():
         return jsonify([])
     except Exception as e:
         logger.error(f"Error getting top talkers: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify([]), 200
 
 
 @bp.route('/analytics/bandwidth', methods=['GET'])
-def api_analytics_bandwidth():
+def api_bandwidth_history():
     try:
         hours = request.args.get('hours', 24, type=int)
         if ext.db_service and FEATURES['persistent_storage']:
-            data = ext.db_service.get_bandwidth_history(hours=hours,
-                                                        limit=max(10, hours * 6))
-            return jsonify(data)
-        elif hasattr(ext, 'bandwidth_history') and ext.bandwidth_history:
-            return jsonify(list(ext.bandwidth_history)[-hours * 12:])
+            return jsonify(ext.db_service.get_bandwidth_history(hours=hours))
+        if ext.sniffer:
+            stats = ext.sniffer.get_statistics()
+            return jsonify([{
+                'timestamp': datetime.datetime.now().isoformat(),
+                'bandwidth': stats.get('currentBandwidth', 0),
+            }])
         return jsonify([])
     except Exception as e:
         logger.error(f"Error getting bandwidth history: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-@bp.route('/traffic/flow', methods=['GET'])
-def api_traffic_flow():
-    """Traffic flow data for real-time protocol charts."""
-    try:
-        minutes = request.args.get('minutes', 30, type=int)
-        buckets = request.args.get('buckets', 30, type=int)
-
-        flow_data = []
-        if ext.db_service and FEATURES['persistent_storage']:
-            end_time = datetime.utcnow()
-            start_time = end_time - timedelta(minutes=minutes)
-            raw = ext.db_service.get_traffic_features(start_time=start_time,
-                                                       end_time=end_time,
-                                                       limit=buckets)
-            for r in raw:
-                flow_data.append({
-                    'timestamp': r.get('window_start', ''),
-                    'time_label': (r.get('window_start', '')[-8:-3]
-                                   if r.get('window_start') else ''),
-                    'tcp': r.get('tcp_packets', 0),
-                    'udp': r.get('udp_packets', 0),
-                    'icmp': r.get('icmp_packets', 0),
-                    'other': r.get('other_packets', 0),
-                    'total': r.get('total_packets', 0),
-                    'bytes': r.get('total_bytes', 0),
-                })
-        elif hasattr(ext, 'traffic_history') and ext.traffic_history:
-            history = list(ext.traffic_history)
-            step = max(1, len(history) // buckets)
-            for h in history[::step][-buckets:]:
-                flow_data.append({
-                    'timestamp': h.get('timestamp', ''),
-                    'time_label': '',
-                    'tcp': h.get('tcp', 0),
-                    'udp': h.get('udp', 0),
-                    'icmp': h.get('icmp', 0),
-                    'other': h.get('other', 0),
-                    'total': h.get('total', 0),
-                    'bytes': h.get('bytes', h.get('total_bytes', 0)),
-                })
-
-        return jsonify({
-            'flow': flow_data,
-            'minutes': minutes,
-            'bucket_count': buckets,
-        })
-    except Exception as e:
-        logger.error(f"Error getting traffic flow: {str(e)}")
-        return jsonify({'flow': [], 'minutes': minutes, 'bucket_count': buckets})
+        return jsonify([]), 200
 
 
 @bp.route('/traffic/stats', methods=['GET'])
 def api_traffic_stats():
     try:
-        stats = ext._collect_traffic_snapshot()
-        return jsonify(stats)
+        if ext.sniffer:
+            stats = ext.sniffer.get_statistics()
+            return jsonify({
+                'total_packets': stats.get('totalPackets', 0),
+                'tcp_packets': stats.get('tcpPackets', 0),
+                'udp_packets': stats.get('udpPackets', 0),
+                'icmp_packets': stats.get('icmpPackets', 0),
+                'current_bandwidth': stats.get('currentBandwidth', 0),
+                'peak_bandwidth': stats.get('peakBandwidth', 0),
+                'average_bandwidth': stats.get('averageBandwidth', 0),
+            })
+        if ext.db_service and FEATURES['persistent_storage']:
+            latest = ext.db_service.get_traffic_stats(limit=1)
+            if latest:
+                return jsonify(latest[0])
+        return jsonify({})
     except Exception as e:
         logger.error(f"Error getting traffic stats: {str(e)}")
+        return jsonify({}), 200
+
+
+@bp.route('/traffic/flow', methods=['GET'])
+def api_traffic_flow():
+    try:
+        minutes = request.args.get('minutes', 30, type=int)
+        bucket_count = request.args.get('buckets', 30, type=int)
+
+        now = time.time()
+        window = minutes * 60
+        bucket_size = window / bucket_count
+
+        buckets = []
+        for i in range(bucket_count):
+            bucket_start = now - window + (i * bucket_size)
+            buckets.append({
+                'timestamp': datetime.datetime.fromtimestamp(bucket_start).isoformat(),
+                'time_label': datetime.datetime.fromtimestamp(bucket_start).strftime('%H:%M'),
+                'tcp': 0, 'udp': 0, 'icmp': 0, 'other': 0, 'total': 0, 'bytes': 0,
+            })
+
+        if ext.sniffer and ext.sniffer.captured_packets:
+            for pkt in ext.sniffer.captured_packets:
+                try:
+                    ts_str = pkt.get('timestamp', '')
+                    if '.' in ts_str:
+                        pkt_time = datetime.datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
+                    else:
+                        pkt_time = datetime.datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+                    pkt_ts = pkt_time.timestamp()
+                except Exception:
+                    continue
+                if pkt_ts < (now - window) or pkt_ts > now:
+                    continue
+                bucket_idx = min(bucket_count - 1, max(0, int((pkt_ts - (now - window)) / bucket_size)))
+                proto = (pkt.get('protocol') or '').upper()
+                if proto == 'TCP':
+                    buckets[bucket_idx]['tcp'] += 1
+                elif proto == 'UDP':
+                    buckets[bucket_idx]['udp'] += 1
+                elif proto == 'ICMP':
+                    buckets[bucket_idx]['icmp'] += 1
+                else:
+                    buckets[bucket_idx]['other'] += 1
+                buckets[bucket_idx]['total'] += 1
+                buckets[bucket_idx]['bytes'] += pkt.get('length', 0)
+
+        return jsonify({'data': buckets})
+    except Exception as e:
+        logger.error(f"Error fetching traffic flow: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -171,22 +218,22 @@ def api_traffic_stats():
 def api_traffic_top_talkers():
     try:
         limit = request.args.get('limit', 10, type=int)
-        devices = []
-        if ext.db_service and FEATURES['persistent_storage']:
-            devices = ext.db_service.get_devices(limit=1000)
-        elif ext.sniffer:
-            devices = ext._collect_device_snapshot()
-
-        if devices:
-            def _packets_total(device):
-                return (
-                    (device.get('packets_in') or device.get('packetsIn') or 0)
-                    + (device.get('packets_out') or device.get('packetsOut') or 0)
-                    + (device.get('packetsCaptured') or 0)
-                )
-            sorted_devices = sorted(devices, key=_packets_total, reverse=True)
-            return jsonify(sorted_devices[:limit])
-        return jsonify([])
+        talkers = []
+        if ext.sniffer:
+            sorted_devices = sorted(
+                ext.sniffer.devices.items(),
+                key=lambda x: x[1].get('bytes_transferred', 0),
+                reverse=True,
+            )[:limit]
+            for ip, info in sorted_devices:
+                talkers.append({
+                    'ip': ip,
+                    'packets': info.get('packet_count', 0),
+                    'bytes': info.get('bytes_transferred', 0),
+                    'mac': info.get('mac', 'Unknown'),
+                    'vendor': info.get('vendor', 'Unknown'),
+                })
+        return jsonify(talkers)
     except Exception as e:
-        logger.error(f"Error getting top talkers: {str(e)}")
+        logger.error(f"Error fetching top talkers: {str(e)}")
         return jsonify({'error': str(e)}), 500

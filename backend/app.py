@@ -209,7 +209,7 @@ def after_request(response):
     return response
 
 # ============== REGISTER BLUEPRINTS ==============
-from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history
+from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search
 
 blueprints = [
     auth.bp,
@@ -223,6 +223,7 @@ blueprints = [
     logs.bp,
     detection.bp,
     history.bp,
+    search.bp,
 ]
 
 for bp in blueprints:

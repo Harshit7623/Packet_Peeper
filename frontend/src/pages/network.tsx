@@ -1,10 +1,13 @@
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Laptop, Smartphone, Router, Wifi, Shield, Tablet, Tv, Loader2, Grid3X3, Circle, Zap, Activity, Eye } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Laptop, Smartphone, Router, Wifi, Shield, Tablet, Tv, Loader2, Grid3X3, Circle, Zap, Activity, Eye, Search } from "lucide-react";
 import { useMonitorStore } from "@/store/monitorStore";
 import { socketService } from "@/services/socketService";
-import { useState, useEffect, useMemo } from "react";
+import { apiService } from "@/services/apiService";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const iconMap: Record<string, any> = {
@@ -46,6 +49,30 @@ export default function NetworkMap() {
   const [selectedDevice, setSelectedDevice] = useState<DeviceNode | null>(null);
   const [hoveredDevice, setHoveredDevice] = useState<number | null>(null);
   const [scanPulse, setScanPulse] = useState(0);
+  const [deviceSearch, setDeviceSearch] = useState('');
+  const [deviceTypeFilter, setDeviceTypeFilter] = useState('all');
+  const [serverFilteredDevices, setServerFilteredDevices] = useState<any[] | null>(null);
+
+  const applyDeviceFilter = useCallback(async () => {
+    if (!deviceSearch && deviceTypeFilter === 'all') {
+      setServerFilteredDevices(null);
+      return;
+    }
+    try {
+      const params: any = {};
+      if (deviceSearch) params.search = deviceSearch;
+      if (deviceTypeFilter !== 'all') params.device_type = deviceTypeFilter;
+      const result = await apiService.getDevices(params);
+      setServerFilteredDevices(result.data || []);
+    } catch (err) {
+      console.error('Device filter failed:', err);
+    }
+  }, [deviceSearch, deviceTypeFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(applyDeviceFilter, 400);
+    return () => clearTimeout(timer);
+  }, [applyDeviceFilter]);
   
   // Continuous scanning animation
   useEffect(() => {
@@ -63,9 +90,10 @@ export default function NetworkMap() {
   
   // Use real devices only - no demo data
   const displayDevices: DeviceNode[] = useMemo(() => {
-    if (devices.length === 0) return [];
-    
-    const baseDevices = devices.map((d, i) => ({
+    const sourceDevices = serverFilteredDevices !== null ? serverFilteredDevices : devices;
+    if (sourceDevices.length === 0) return [];
+
+    const baseDevices = sourceDevices.map((d: any, i: number) => ({
       id: i,
       name: d.hostname || `Device ${i + 1}`,
       location: d.ip_address,
@@ -89,7 +117,7 @@ export default function NetworkMap() {
       return [{ ...routerDevice, angle: 0, distance: 0 }, ...positionedDevices];
     }
     return positionedDevices;
-  }, [devices]);
+  }, [devices, serverFilteredDevices]);
 
   const routerDevice = displayDevices.find(d => d.type === 'router');
   const connectedDevices = displayDevices.filter(d => d.type !== 'router');
@@ -109,23 +137,45 @@ export default function NetworkMap() {
               Network Topology
             </h1>
             <p className="text-muted-foreground text-lg">
-              {devices.length > 0 ? (
-                <span className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  {devices.length} active devices detected
-                </span>
+          {displayDevices.length > 0 ? (
+            <span className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              {displayDevices.length} active devices{serverFilteredDevices !== null ? ` (filtered from ${devices.length})` : ''}
+            </span>
               ) : (
                 'Visualize your network infrastructure'
               )}
             </p>
           </motion.div>
           
-          <motion.div 
-            className="flex items-center gap-3"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-          >
+        <motion.div
+          className="flex items-center gap-3"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+        >
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search devices..."
+              className="pl-9 h-9 w-48 text-xs font-mono bg-black/20 rounded-xl border-none"
+              value={deviceSearch}
+              onChange={(e) => setDeviceSearch(e.target.value)}
+            />
+          </div>
+          <Select value={deviceTypeFilter} onValueChange={setDeviceTypeFilter}>
+            <SelectTrigger className="h-9 w-36 text-xs rounded-xl bg-black/20 border-none">
+              <SelectValue placeholder="Device type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="router">Router</SelectItem>
+              <SelectItem value="pc">PC</SelectItem>
+              <SelectItem value="laptop">Laptop</SelectItem>
+              <SelectItem value="mobile">Mobile</SelectItem>
+              <SelectItem value="iot">IoT</SelectItem>
+            </SelectContent>
+          </Select>
             <div className="bg-card/60 border border-border/50 rounded-xl p-1 flex">
               <Button
                 variant={viewMode === 'topology' ? 'default' : 'ghost'}

@@ -194,7 +194,7 @@ def api_history_alerts():
     limit = request.args.get('limit', 100, type=int)
 
     try:
-        data = ext.db_service.get_alerts(
+        data, _ = ext.db_service.get_alerts(
             start_time=start,
             end_time=end,
             severity=severity,

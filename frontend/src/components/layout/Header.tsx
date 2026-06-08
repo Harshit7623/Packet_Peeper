@@ -1,7 +1,8 @@
-import { Bell, Search, User, Shield, Activity, Moon, Sun, Settings, LogOut, X, Check } from "lucide-react";
+import { Bell, Search, User, Shield, Activity, Moon, Sun, Settings, LogOut, X, Check, Wifi, Zap, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useEffect } from "react";
+import { Badge } from "@/components/ui/badge";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useMonitorStore } from "@/store/monitorStore";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -18,6 +19,10 @@ export function Header() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{ packets: any[]; alerts: any[]; devices: any[]; total: number } | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   const unreadAlerts = alerts.filter(a => a.severity === 'critical' || a.severity === 'high').slice(0, 5);
 
@@ -26,10 +31,35 @@ export function Header() {
     return () => clearInterval(timer);
   }, []);
 
-  // Close dropdowns when clicking outside
+  const doSearch = useCallback(async (q: string) => {
+    if (!q.trim() || q.length < 2) {
+      setSearchResults(null);
+      setShowSearch(false);
+      return;
+    }
+    setIsSearching(true);
+    setShowSearch(true);
+    try {
+      const results = await apiService.search(q, 5);
+      setSearchResults(results);
+    } catch {
+      setSearchResults(null);
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => doSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, doSearch]);
+
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+      if (searchRef.current && !searchRef.current.contains(target as Node)) {
+        setShowSearch(false);
+      }
       if (!target.closest('.notification-dropdown') && !target.closest('.notification-btn')) {
         setShowNotifications(false);
       }
@@ -44,8 +74,8 @@ export function Header() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      // Navigate to packets page with search
       setLocation(`/packets?search=${encodeURIComponent(searchQuery)}`);
+      setShowSearch(false);
     }
   };
 
@@ -95,16 +125,79 @@ export function Header() {
           </div>
         </motion.div>
 
-        {/* Search */}
-        <form onSubmit={handleSearch} className="relative max-w-sm w-full hidden md:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
-          <Input 
-            placeholder="Search network assets..." 
-            className="pl-10 bg-background/60 dark:bg-black/40 border-border/40 focus:border-primary/50 focus:ring-primary/10 h-8 rounded text-[10px] font-mono tracking-widest uppercase"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </form>
+    {/* Search */}
+    <form onSubmit={handleSearch} className="relative max-w-sm w-full hidden md:block">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
+      <Input
+        placeholder="Search network assets..."
+        className="pl-10 bg-background/60 dark:bg-black/40 border-border/40 focus:border-primary/50 focus:ring-primary/10 h-8 rounded text-[10px] font-mono tracking-widest uppercase"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        onFocus={() => searchResults && searchResults.total > 0 && setShowSearch(true)}
+      />
+      <AnimatePresence>
+        {showSearch && searchQuery.length >= 2 && (
+          <motion.div
+            className="absolute top-full left-0 right-0 mt-2 bg-card border border-border rounded-xl shadow-2xl overflow-hidden z-50"
+            ref={searchRef}
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            transition={{ duration: 0.15 }}
+          >
+            {isSearching ? (
+              <div className="p-4 text-center text-xs text-muted-foreground">Searching...</div>
+            ) : searchResults && searchResults.total > 0 ? (
+              <div className="max-h-80 overflow-y-auto">
+                {searchResults.packets.length > 0 && (
+                  <div>
+                    <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-muted/30">Packets ({searchResults.packets.length})</div>
+                    {searchResults.packets.slice(0, 5).map((p: any, i: number) => (
+                      <div key={`p-${i}`} className="px-3 py-2 hover:bg-muted/30 cursor-pointer text-xs" onClick={() => { setLocation('/packets'); setShowSearch(false); }}>
+                        <span className="font-mono text-primary">{p.src_ip}</span>
+                        <span className="text-muted-foreground mx-1">→</span>
+                        <span className="font-mono">{p.dst_ip}</span>
+                        <Badge variant="outline" className="ml-2 text-[9px]">{p.protocol}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {searchResults.alerts.length > 0 && (
+                  <div>
+                    <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-muted/30">Alerts ({searchResults.alerts.length})</div>
+                    {searchResults.alerts.slice(0, 5).map((a: any, i: number) => (
+                      <div key={`a-${i}`} className="px-3 py-2 hover:bg-muted/30 cursor-pointer text-xs" onClick={() => { setLocation('/alerts'); setShowSearch(false); }}>
+                        <span className={`font-bold ${a.severity === 'critical' ? 'text-red-400' : a.severity === 'high' ? 'text-orange-400' : 'text-foreground'}`}>{a.title}</span>
+                        <span className="text-muted-foreground ml-2">{a.alert_type}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {searchResults.devices.length > 0 && (
+                  <div>
+                    <div className="px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-muted/30">Devices ({searchResults.devices.length})</div>
+                    {searchResults.devices.slice(0, 5).map((d: any, i: number) => (
+                      <div key={`d-${i}`} className="px-3 py-2 hover:bg-muted/30 cursor-pointer text-xs" onClick={() => { setLocation('/network'); setShowSearch(false); }}>
+                        <span className="font-mono text-primary">{d.ip_address}</span>
+                        {d.hostname && <span className="text-muted-foreground ml-2">({d.hostname})</span>}
+                        <Badge variant="outline" className="ml-2 text-[9px]">{d.device_type || 'unknown'}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="px-3 py-2 text-center border-t border-border/50">
+                  <Button variant="ghost" size="sm" className="text-xs text-primary" onClick={handleSearch}>
+                    View all {searchResults.total} results
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 text-center text-xs text-muted-foreground">No results found</div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </form>
       </div>
 
       <div className="flex items-center gap-4">
