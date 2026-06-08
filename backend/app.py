@@ -38,6 +38,9 @@ from config.config import (
     DB_CLEANUP_INTERVAL_HOURS,
     AUTO_START_SNIFFING, CAPTURE_INTERFACE,
     ASYNC_PROCESSING,
+    ANOMALY_CHECK_INTERVAL, ANOMALY_SCORE_THRESHOLD,
+    ANOMALY_TRAINING_WINDOW_HOURS, ANOMALY_MIN_TRAINING_SAMPLES,
+    ML_MODEL_DIR,
 )
 
 # ============== LOGGING ==============
@@ -140,6 +143,20 @@ except Exception as e:
     ext.auth_service = None
     logger.warning(f"[WARN] Authentication service initialization failed: {str(e)}")
 
+if FEATURES.get('ml_anomaly_detection', False):
+    try:
+        from services.ml_anomaly_service import init_ml_service
+        ext.ml_service = init_ml_service(
+            model_dir=ML_MODEL_DIR,
+            score_threshold=ANOMALY_SCORE_THRESHOLD,
+            training_window_hours=ANOMALY_TRAINING_WINDOW_HOURS,
+            min_training_samples=ANOMALY_MIN_TRAINING_SAMPLES,
+        )
+        logger.info("[OK] ML Anomaly Detection service initialized")
+    except Exception as e:
+        ext.ml_service = None
+        logger.warning(f"[WARN] ML Anomaly Detection initialization failed: {str(e)}")
+
 try:
     init_packet_processor()
     logger.info("[OK] Packet processor initialized")
@@ -209,7 +226,7 @@ def after_request(response):
     return response
 
 # ============== REGISTER BLUEPRINTS ==============
-from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search
+from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml
 
 blueprints = [
     auth.bp,
@@ -224,6 +241,7 @@ blueprints = [
     detection.bp,
     history.bp,
     search.bp,
+    ml.bp,
 ]
 
 for bp in blueprints:
@@ -292,6 +310,31 @@ def database_cleanup_loop():
             logger.error(f"Error in database cleanup loop: {str(e)}")
             time.sleep(300)
 
+
+def ml_anomaly_loop():
+    if not FEATURES.get('ml_anomaly_detection', False):
+        return
+    time.sleep(30)
+    if ext.ml_service and ext.ml_service.model is None and ext.db_service:
+        logger.info("[ML] No trained model found — auto-training from historical data...")
+        try:
+            result = ext.ml_service.train(db_service=ext.db_service)
+            if result.get('success'):
+                logger.info(f"[ML] Auto-training complete: {result['samples']} samples")
+            else:
+                logger.warning(f"[ML] Auto-training skipped: {result.get('error')}")
+        except ImportError:
+            logger.warning("[ML] Auto-training skipped: scikit-learn not installed")
+        except Exception as e:
+            logger.warning(f"[ML] Auto-training failed: {e}")
+    while True:
+        try:
+            ext._run_anomaly_check()
+            time.sleep(ANOMALY_CHECK_INTERVAL)
+        except Exception as e:
+            logger.error(f"Error in ML anomaly loop: {type(e).__name__}: {str(e)}")
+            time.sleep(60)
+
 # ============== SPA ROUTING ==============
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -359,6 +402,14 @@ if __name__ == '__main__':
         name="DatabaseCleanupThread",
     )
     cleanup_thread.start()
+
+    if FEATURES.get('ml_anomaly_detection', False):
+        ml_thread = threading.Thread(
+            target=ml_anomaly_loop,
+            daemon=True,
+            name="MLAnomalyThread",
+        )
+        ml_thread.start()
 
     logger.info(f"[Server] Starting Flask server on {HOST}:{PORT}")
     try:

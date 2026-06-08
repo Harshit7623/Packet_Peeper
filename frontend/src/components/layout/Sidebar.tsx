@@ -1,21 +1,22 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { 
-  LayoutDashboard, 
-  ShieldCheck, 
-  ShieldAlert, 
-  Network, 
-  Activity, 
-  LineChart, 
-  Server, 
-  FileText, 
-  Settings, 
-  ChevronLeft, 
+import {
+  LayoutDashboard,
+  ShieldCheck,
+  ShieldAlert,
+  Network,
+  Activity,
+  LineChart,
+  Server,
+  FileText,
+  Settings,
+  ChevronLeft,
   ChevronRight,
   UserCircle,
   Eye,
   Terminal,
-  Sparkles
+  Sparkles,
+  Brain
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -28,6 +29,7 @@ const sidebarItems = [
   { icon: Sparkles, label: "Action Center", sub: "Guided Fixes", href: "/action-center" },
   { icon: Network, label: "Devices", sub: "Node Topology", href: "/network" },
   { icon: Activity, label: "Traffic", sub: "Usage Analysis", href: "/traffic" },
+  { icon: Brain, label: "ML Detect", sub: "Anomaly AI", href: "/ml" },
   { icon: LineChart, label: "Insights", sub: "Deep Analytics", href: "/analytics" },
   { icon: Server, label: "System", sub: "Core Health", href: "/system" },
   { icon: FileText, label: "History", sub: "Event Stream", href: "/logs" },

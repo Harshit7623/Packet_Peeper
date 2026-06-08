@@ -172,6 +172,14 @@ TRAFFIC_STATS_INTERVAL = int(os.getenv("TRAFFIC_STATS_INTERVAL", 10))
 TRAFFIC_STATS_RETENTION_DAYS = int(os.getenv("TRAFFIC_STATS_RETENTION_DAYS", 30))
 TRAFFIC_FEATURE_INTERVAL = int(os.getenv("TRAFFIC_FEATURE_INTERVAL", 60))
 
+# ============== ML ANOMALY DETECTION ==============
+ANOMALY_SCORE_THRESHOLD = float(os.getenv("ANOMALY_SCORE_THRESHOLD", -0.3))
+ANOMALY_TRAINING_WINDOW_HOURS = int(os.getenv("ANOMALY_TRAINING_WINDOW_HOURS", 168))
+ANOMALY_CHECK_INTERVAL = int(os.getenv("ANOMALY_CHECK_INTERVAL", 300))
+ANOMALY_MIN_TRAINING_SAMPLES = int(os.getenv("ANOMALY_MIN_TRAINING_SAMPLES", 100))
+ML_MODEL_DIR = DATA_DIR / "models"
+ML_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
 # ============== WEBSOCKET ==============
 SOCKETIO_ASYNC_MODE = os.getenv("SOCKETIO_ASYNC_MODE", "threading")
 SOCKETIO_PING_TIMEOUT = int(os.getenv("SOCKETIO_PING_TIMEOUT", 60))
@@ -198,6 +206,7 @@ FEATURES = {
     "mobile_support": os.getenv("FEATURE_MOBILE_SUPPORT", "False").lower() == "true",
     "electron_desktop": os.getenv("FEATURE_ELECTRON_DESKTOP", "False").lower() == "true",
     "ai_assistant": os.getenv("FEATURE_AI_ASSISTANT", "True").lower() == "true",
+    "ml_anomaly_detection": os.getenv("FEATURE_ML_ANOMALY_DETECTION", "True").lower() == "true",
 }
 
 # ============== VALIDATION ==============

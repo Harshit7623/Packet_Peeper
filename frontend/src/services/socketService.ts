@@ -153,6 +153,11 @@ class SocketService {
     this.socket.on('processor_stats', (stats: any) => {
       console.log('Processor stats:', stats);
     });
+
+    // ML anomaly score updates
+    this.socket.on('ml_anomaly_update', (data: any) => {
+      console.log('ML anomaly update:', data);
+    });
   }
 
   /**

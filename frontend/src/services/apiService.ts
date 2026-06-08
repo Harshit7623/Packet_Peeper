@@ -761,6 +761,67 @@ class ApiService {
       body: JSON.stringify({ profile })
     });
   }
+
+  // ==================== ML Anomaly Detection ====================
+
+  async getMlStatus() {
+    return this.request<{
+      model_loaded: boolean;
+      last_trained: string | null;
+      training_samples: number;
+      score_threshold: number;
+      training_window_hours: number;
+      min_training_samples: number;
+      total_scores: number;
+      anomaly_count: number;
+      last_score_time: string | null;
+      model_path: string;
+    }>('/api/ml/status');
+  }
+
+  async getMlScores(limit: number = 200) {
+    return this.request<{
+      scores: Array<{
+        timestamp: string;
+        score: number;
+        is_anomaly: boolean;
+        threshold: number;
+        window_start: string | null;
+      }>;
+      count: number;
+    }>(`/api/ml/scores?limit=${limit}`);
+  }
+
+  async retrainMl(windowHours?: number) {
+    return this.request<{
+      success: boolean;
+      samples?: number;
+      contamination?: number;
+      start_time?: string;
+      end_time?: string;
+      trained_at?: string;
+      error?: string;
+    }>('/api/ml/retrain', {
+      method: 'POST',
+      body: JSON.stringify({ window_hours: windowHours }),
+    }, 30000);
+  }
+
+  async getMlConfig() {
+    return this.request<{
+      score_threshold: number;
+      training_window_hours: number;
+      min_training_samples: number;
+      feature_columns: string[];
+    }>('/api/ml/config');
+  }
+
+  async updateMlConfig(config: { score_threshold?: number }) {
+    return this.request<any>('/api/ml/config', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
 }
 
 // Export singleton instance

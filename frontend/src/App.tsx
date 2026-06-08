@@ -24,6 +24,7 @@ import Login from "@/pages/login";
 import Register from "@/pages/register";
 import Profile from "@/pages/profile";
 import ActionCenter from "@/pages/action-center";
+import MlAnomaly from "@/pages/ml-anomaly";
 
 function LoadingScreen() {
   return (
@@ -64,8 +65,9 @@ function Router() {
       <Route path="/packets" component={PacketMonitor} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/network" component={NetworkMap} />
-      <Route path="/traffic" component={TrafficAnalysis} />
-      <Route path="/analytics" component={Analytics} />
+    <Route path="/traffic" component={TrafficAnalysis} />
+    <Route path="/ml" component={MlAnomaly} />
+    <Route path="/analytics" component={Analytics} />
       <Route path="/system" component={SystemStats} />
       <Route path="/logs" component={Logs} />
       <Route path="/settings" component={Settings} />

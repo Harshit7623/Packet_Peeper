@@ -16,7 +16,7 @@ from flask import request
 from config.config import (
     ALERT_MAX_STORED, FEATURES, TRAFFIC_STATS_INTERVAL,
     LOG_MAX_STORED, PACKET_DEDUP_WINDOW_SECONDS, PACKET_DEDUP_MAX,
-    TRAFFIC_FEATURE_INTERVAL,
+    TRAFFIC_FEATURE_INTERVAL, ANOMALY_CHECK_INTERVAL,
 )
 
 logger = logging.getLogger('packet_peeper')
@@ -25,6 +25,7 @@ logger = logging.getLogger('packet_peeper')
 sniffer = None
 db_service = None
 auth_service = None
+ml_service = None
 alerts = []
 jwt_blacklist = set()
 logs = []
@@ -300,6 +301,64 @@ def _persist_traffic_features(stats: dict) -> None:
             'dst_ips': set(),
             'dst_ports': set(),
         }
+
+
+def _run_anomaly_check() -> None:
+    if not ml_service or not db_service or not FEATURES.get('ml_anomaly_detection', False):
+        return
+    if ml_service.model is None:
+        return
+    try:
+        end_time = datetime.datetime.utcnow()
+        start_time = end_time - datetime.timedelta(minutes=5)
+        rows = db_service.get_traffic_features(
+            start_time=start_time, end_time=end_time, limit=10,
+        )
+        if not rows:
+            return
+        results = ml_service.batch_score(rows)
+        for result in results:
+            if result.get('is_anomaly'):
+                _emit_anomaly_alert(result)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.error(f"[ML] Anomaly check error: {e}")
+
+
+def _emit_anomaly_alert(result: dict) -> None:
+    score = result.get('score', 0)
+    window = result.get('window_start', 'unknown')
+    features = result.get('features', {})
+    message = (
+        f"ML Anomaly Detected (score={score:.4f}, threshold={result.get('threshold', -0.3):.2f}) "
+        f"at window {window}"
+    )
+    additional_info = {
+        'alert_type': 'anomaly',
+        'evidence': {
+            'score': score,
+            'threshold': result.get('threshold'),
+            'window_start': window,
+            'top_features': _top_anomalous_features(features, n=5),
+        },
+    }
+    broadcast_alert(
+        alert_type='anomaly',
+        message=message,
+        severity='high',
+        source='ML Anomaly Detector',
+        additional_info=additional_info,
+    )
+    if socketio:
+        socketio.emit('ml_anomaly_update', result, namespace='/')
+
+
+def _top_anomalous_features(features: dict, n: int = 5) -> list:
+    if not features:
+        return []
+    sorted_feats = sorted(features.items(), key=lambda x: abs(float(x[1])), reverse=True)
+    return [{'feature': k, 'value': round(float(v), 4)} for k, v in sorted_feats[:n]]
 
 
 def _extract_token_from_request() -> str:

@@ -24,6 +24,11 @@ from config.config import (
     LOG_LEVEL,
     LOG_FILE,
     FEATURES,
+    ANOMALY_SCORE_THRESHOLD,
+    ANOMALY_CHECK_INTERVAL,
+    ANOMALY_TRAINING_WINDOW_HOURS,
+    ANOMALY_MIN_TRAINING_SAMPLES,
+    ML_MODEL_DIR,
     validate_config,
 )
 
@@ -48,6 +53,11 @@ __all__ = [
     'LOG_LEVEL',
     'LOG_FILE',
     'FEATURES',
+    'ANOMALY_SCORE_THRESHOLD',
+    'ANOMALY_CHECK_INTERVAL',
+    'ANOMALY_TRAINING_WINDOW_HOURS',
+    'ANOMALY_MIN_TRAINING_SAMPLES',
+    'ML_MODEL_DIR',
     'validate_config',
 ]
 
