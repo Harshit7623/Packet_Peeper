@@ -27,6 +27,8 @@ def api_get_profile():
             'username': 'operator',
             'email': 'operator@local',
             'role': 'admin',
+            'default_org_id': None,
+            'organizations': [],
             'created_at': datetime.datetime.fromtimestamp(ext.start_time).isoformat(),
             'last_login': datetime.datetime.now().isoformat(),
             'device_info': {

@@ -324,10 +324,6 @@ def generate_report():
 
 @bp.route('/clear_all', methods=['POST'])
 def api_clear_all():
-    if ENABLE_AUTH:
-        token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        if not token or token in ext.jwt_blacklist:
-            return jsonify({'error': 'Invalid or missing token'}), 403
     try:
         with ext.alerts_lock:
             ext.alerts.clear()

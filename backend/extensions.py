@@ -368,6 +368,43 @@ def _extract_token_from_request() -> str:
     return request.cookies.get('pp_auth_token', '').strip()
 
 
+def _check_rbac() -> tuple | None:
+    from flask import g
+    from services.auth_service import RBAC_ENDPOINT_RULES
+
+    if not g.get('current_role'):
+        return None
+
+    path = request.path
+    method = request.method
+
+    for rule_path, rule in RBAC_ENDPOINT_RULES.items():
+        if rule.get('prefix'):
+            if not path.startswith(rule_path):
+                continue
+        else:
+            if path != rule_path:
+                continue
+
+        allowed_roles = rule.get('roles', set())
+        if g.current_role not in allowed_roles:
+            return (403, 'Insufficient permissions')
+
+        restricted_methods = rule.get('methods')
+        if restricted_methods and method in restricted_methods:
+            if g.current_role not in allowed_roles:
+                return (403, 'Insufficient permissions')
+
+        write_roles = rule.get('write_roles')
+        if write_roles and method in ('POST', 'PUT', 'DELETE', 'PATCH'):
+            if g.current_role not in write_roles:
+                return (403, 'Insufficient permissions for write operation')
+
+        return None
+
+    return None
+
+
 def broadcast_alert(alert_type: str, message: str, severity: str = 'medium',
                      source: str = 'System', additional_info: dict = None) -> bool:
     try:

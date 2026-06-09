@@ -25,6 +25,7 @@ import Register from "@/pages/register";
 import Profile from "@/pages/profile";
 import ActionCenter from "@/pages/action-center";
 import MlAnomaly from "@/pages/ml-anomaly";
+import Admin from "@/pages/admin";
 
 function LoadingScreen() {
   return (
@@ -70,7 +71,8 @@ function Router() {
     <Route path="/analytics" component={Analytics} />
       <Route path="/system" component={SystemStats} />
       <Route path="/logs" component={Logs} />
-      <Route path="/settings" component={Settings} />
+        <Route path="/settings" component={Settings} />
+        <Route path="/admin" component={Admin} />
       {/* Fallback to 404 */}
       <Route component={NotFound} />
     </Switch>

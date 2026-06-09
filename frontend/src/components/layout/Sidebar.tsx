@@ -16,11 +16,13 @@ import {
   Eye,
   Terminal,
   Sparkles,
-  Brain
+  Brain,
+  UserCog
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useMonitorStore } from "@/store/monitorStore";
+import { useAuth } from "@/contexts/AuthContext";
 
 const sidebarItems = [
   { icon: LayoutDashboard, label: "Home", sub: "Command Center", href: "/" },
@@ -37,10 +39,17 @@ const sidebarItems = [
   { icon: Settings, label: "Settings", sub: "Config", href: "/settings" },
 ];
 
+const adminItems = [
+  { icon: UserCog, label: "Admin", sub: "User Control", href: "/admin" },
+];
+
 export function Sidebar() {
   const [location] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const { isConnected } = useMonitorStore();
+  const { isAdmin } = useAuth();
+
+  const allItems = isAdmin ? [...sidebarItems, ...adminItems] : sidebarItems;
 
   return (
     <motion.div 
@@ -63,7 +72,7 @@ export function Sidebar() {
       </div>
 
       <div className="flex-1 py-6 px-3 space-y-2 overflow-y-auto overflow-x-hidden scrollbar-none">
-        {sidebarItems.map((item) => {
+        {allItems.map((item) => {
           const isActive = location === item.href;
           return (
             <Link key={item.href} href={item.href}>

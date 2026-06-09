@@ -25,18 +25,19 @@ Base = declarative_base()
 class PacketRecord(Base):
     """Captured network packet record"""
     __tablename__ = "packets"
-    
+
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     protocol = Column(String(20), index=True)
-    src_ip = Column(String(45), index=True)  # IPv4 + IPv6
+    src_ip = Column(String(45), index=True) # IPv4 + IPv6
     dst_ip = Column(String(45), index=True)
     src_port = Column(Integer)
     dst_port = Column(Integer)
     length = Column(Integer)
     service = Column(String(100))
     tcp_flags = Column(Integer)
-    payload_hash = Column(String(64))  # SHA256 of payload (for dedup)
+    payload_hash = Column(String(64)) # SHA256 of payload (for dedup)
+    org_id = Column(Integer, index=True, nullable=True)
     
     def to_dict(self):
         return {
@@ -55,17 +56,18 @@ class PacketRecord(Base):
 class AlertRecord(Base):
     """Security alert record"""
     __tablename__ = "alerts"
-    
+
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    alert_type = Column(String(50), index=True)  # port_scan, ddos, brute_force, etc.
-    severity = Column(String(20))  # low, medium, high, critical
+    alert_type = Column(String(50), index=True) # port_scan, ddos, brute_force, etc.
+    severity = Column(String(20)) # low, medium, high, critical
     source_ip = Column(String(45), index=True)
     destination_ip = Column(String(45), index=True)
     title = Column(String(200))
     description = Column(Text)
-    evidence = Column(Text)  # JSON string
+    evidence = Column(Text) # JSON string
     resolved = Column(Boolean, default=False)
+    org_id = Column(Integer, index=True, nullable=True)
     
     def to_dict(self):
         try:
@@ -89,9 +91,9 @@ class AlertRecord(Base):
 class DeviceRecord(Base):
     """Network device record"""
     __tablename__ = "devices"
-    
+
     id = Column(Integer, primary_key=True)
-    ip_address = Column(String(45), unique=True, index=True)
+    ip_address = Column(String(45), index=True)
     mac_address = Column(String(17))
     hostname = Column(String(255))
     device_type = Column(String(100))
@@ -101,6 +103,7 @@ class DeviceRecord(Base):
     packets_out = Column(Integer, default=0)
     bytes_in = Column(Integer, default=0)
     bytes_out = Column(Integer, default=0)
+    org_id = Column(Integer, index=True, nullable=True)
     
     def to_dict(self):
         return {
@@ -117,10 +120,58 @@ class DeviceRecord(Base):
             'bytes_out': self.bytes_out,
         }
 
+class OrganizationRecord(Base):
+    """Organization / tenant for multi-user isolation"""
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    slug = Column(String(60), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+    settings = Column(Text) # JSON blob for org-level preferences
+
+    def to_dict(self):
+        try:
+            settings = json.loads(self.settings) if self.settings else {}
+        except json.JSONDecodeError:
+            settings = {}
+        return {
+            'id': self.id,
+            'name': self.name,
+            'slug': self.slug,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'is_active': self.is_active,
+            'settings': settings,
+        }
+
+
+class OrganizationMemberRecord(Base):
+    """Membership linking users to organizations with a role."""
+    __tablename__ = "organization_members"
+
+    id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, index=True, nullable=False)
+    user_id = Column(Integer, index=True, nullable=False)
+    role = Column(String(20), default="viewer", index=True) # admin, operator, viewer
+    joined_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'org_id': self.org_id,
+            'user_id': self.user_id,
+            'role': self.role,
+            'joined_at': self.joined_at.isoformat() if self.joined_at else None,
+            'is_active': self.is_active,
+        }
+
+
 class UserRecord(Base):
     """User account record for local authentication"""
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True)
     username = Column(String(32), unique=True, index=True, nullable=False)
     email = Column(String(255), unique=True, index=True)
@@ -132,9 +183,10 @@ class UserRecord(Base):
     is_active = Column(Boolean, default=True)
     login_attempts = Column(Integer, default=0)
     locked_until = Column(DateTime)
-    device_info = Column(Text)  # JSON string {mac_address, ip_address, hostname}
-    preferences = Column(Text)  # JSON string for user preferences
-    
+    device_info = Column(Text) # JSON string {mac_address, ip_address, hostname}
+    preferences = Column(Text) # JSON string for user preferences
+    default_org_id = Column(Integer, index=True, nullable=True)
+
     def to_dict(self):
         try:
             device_info = json.loads(self.device_info) if self.device_info else {}
@@ -142,7 +194,7 @@ class UserRecord(Base):
         except json.JSONDecodeError:
             device_info = {}
             preferences = {}
-        
+
         return {
             'id': self.id,
             'username': self.username,
@@ -151,6 +203,7 @@ class UserRecord(Base):
             'last_login': self.last_login.isoformat() if self.last_login else None,
             'is_admin': self.is_admin,
             'role': self.role,
+            'default_org_id': self.default_org_id,
             'device_info': device_info,
             'preferences': preferences,
         }
@@ -358,12 +411,12 @@ class DatabaseService:
         """Save a captured packet to the database"""
         if not FEATURES['persistent_storage'] or not self.SessionLocal:
             return False
-        
+
         try:
             with self.get_session() as session:
                 packet = PacketRecord(
-                    timestamp=datetime.fromisoformat(packet_info['timestamp'].replace('Z', '+00:00')) 
-                              if 'timestamp' in packet_info else datetime.utcnow(),
+                    timestamp=datetime.fromisoformat(packet_info['timestamp'].replace('Z', '+00:00'))
+                    if 'timestamp' in packet_info else datetime.utcnow(),
                     protocol=packet_info.get('protocol'),
                     src_ip=packet_info.get('src_ip'),
                     dst_ip=packet_info.get('dst_ip'),
@@ -373,9 +426,10 @@ class DatabaseService:
                     service=packet_info.get('service'),
                     tcp_flags=packet_info.get('tcp_flags', 0),
                     payload_hash=packet_info.get('payload_hash'),
+                    org_id=packet_info.get('org_id'),
                 )
                 session.add(packet)
-            return True
+                return True
         except Exception as e:
             logger.error(f"Error saving packet: {str(e)}")
             return False
@@ -450,7 +504,7 @@ class DatabaseService:
         """Save a security alert to the database"""
         if not self.SessionLocal:
             return False
-        
+
         try:
             with self.get_session() as session:
                 alert = AlertRecord(
@@ -461,9 +515,10 @@ class DatabaseService:
                     title=alert_info.get('title'),
                     description=alert_info.get('description'),
                     evidence=json.dumps(alert_info.get('evidence', {})),
+                    org_id=alert_info.get('org_id'),
                 )
                 session.add(alert)
-            return True
+                return True
         except Exception as e:
             logger.error(f"Error saving alert: {str(e)}")
             return False
@@ -627,13 +682,14 @@ class DatabaseService:
         """Create or update device record"""
         if not self.SessionLocal:
             return False
-        
+
         try:
             with self.get_session() as session:
+                org_id = device_info.get('org_id')
                 device = session.query(DeviceRecord).filter_by(
                     ip_address=device_info.get('ipAddress')
                 ).first()
-                
+
                 if device:
                     device.last_seen = datetime.utcnow()
                     device.packets_in = device_info.get('packetsIn', device.packets_in or 0)
@@ -646,6 +702,8 @@ class DatabaseService:
                         device.hostname = device_info.get('hostname')
                     if device_info.get('type'):
                         device.device_type = device_info.get('type')
+                    if org_id is not None and device.org_id is None:
+                        device.org_id = org_id
                 else:
                     device = DeviceRecord(
                         ip_address=device_info.get('ipAddress'),
@@ -656,9 +714,10 @@ class DatabaseService:
                         packets_out=device_info.get('packetsOut', 0),
                         bytes_in=device_info.get('bytesIn', 0),
                         bytes_out=device_info.get('bytesOut', 0),
+                        org_id=org_id,
                     )
                     session.add(device)
-            return True
+                return True
         except Exception as e:
             logger.error(f"Error updating device: {str(e)}")
             return False
@@ -992,7 +1051,7 @@ class DatabaseService:
         """Create a new user account"""
         if not self.SessionLocal:
             return False
-        
+
         try:
             with self.get_session() as session:
                 user = UserRecord(
@@ -1001,12 +1060,13 @@ class DatabaseService:
                     password_hash=user_data.get('password_hash'),
                     is_admin=user_data.get('is_admin', False),
                     role=user_data.get('role', 'operator'),
+                    default_org_id=user_data.get('default_org_id'),
                     device_info=json.dumps(user_data.get('device_info', {})),
                     preferences=json.dumps(user_data.get('preferences', {})),
                 )
                 session.add(user)
-            logger.info(f"User created: {user_data.get('username')}")
-            return True
+                logger.info(f"User created: {user_data.get('username')}")
+                return True
         except Exception as e:
             logger.error(f"Error creating user: {str(e)}")
             return False
@@ -1015,7 +1075,7 @@ class DatabaseService:
         """Retrieve user by username"""
         if not self.SessionLocal:
             return None
-        
+
         try:
             with self.get_session() as session:
                 user = session.query(UserRecord).filter_by(username=username).first()
@@ -1030,6 +1090,7 @@ class DatabaseService:
                         'is_admin': user.is_admin,
                         'is_active': user.is_active,
                         'role': user.role,
+                        'default_org_id': user.default_org_id,
                         'login_attempts': user.login_attempts,
                         'locked_until': user.locked_until.isoformat() if user.locked_until else None,
                         'device_info': json.loads(user.device_info) if user.device_info else {},
@@ -1059,6 +1120,7 @@ class DatabaseService:
                         'is_admin': user.is_admin,
                         'is_active': user.is_active,
                         'role': user.role,
+                        'default_org_id': user.default_org_id,
                         'login_attempts': user.login_attempts,
                         'locked_until': user.locked_until.isoformat() if user.locked_until else None,
                         'device_info': json.loads(user.device_info) if user.device_info else {},
@@ -1291,7 +1353,7 @@ class DatabaseService:
         """Delete user account (admin function)"""
         if not self.SessionLocal:
             return False
-        
+
         try:
             with self.get_session() as session:
                 user = session.query(UserRecord).filter_by(username=username).first()
@@ -1299,11 +1361,333 @@ class DatabaseService:
                     session.delete(user)
                     logger.info(f"User deleted: {username}")
                     return True
-                return False
+            return False
         except Exception as e:
             logger.error(f"Error deleting user: {str(e)}")
             return False
-    
+
+    # ============== ORGANIZATION OPERATIONS ==============
+
+    def create_organization(self, org_data: Dict) -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                org = OrganizationRecord(
+                    name=org_data.get('name'),
+                    slug=org_data.get('slug'),
+                    settings=json.dumps(org_data.get('settings', {})),
+                )
+                session.add(org)
+                session.flush()
+                return org.to_dict()
+        except Exception as e:
+            logger.error(f"Error creating organization: {str(e)}")
+            return None
+
+    def get_organization(self, org_id: int) -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                org = session.query(OrganizationRecord).filter_by(id=org_id).first()
+                return org.to_dict() if org else None
+        except Exception as e:
+            logger.error(f"Error retrieving organization: {str(e)}")
+            return None
+
+    def get_organization_by_slug(self, slug: str) -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                org = session.query(OrganizationRecord).filter_by(slug=slug).first()
+                return org.to_dict() if org else None
+        except Exception as e:
+            logger.error(f"Error retrieving organization by slug: {str(e)}")
+            return None
+
+    def get_all_organizations(self, limit: int = 1000) -> List[Dict]:
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                orgs = session.query(OrganizationRecord).order_by(
+                    OrganizationRecord.created_at.desc()
+                ).limit(limit).all()
+                return [o.to_dict() for o in orgs]
+        except Exception as e:
+            logger.error(f"Error retrieving organizations: {str(e)}")
+            return []
+
+    def update_organization(self, org_id: int, updates: Dict) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                org = session.query(OrganizationRecord).filter_by(id=org_id).first()
+                if not org:
+                    return False
+                if 'name' in updates:
+                    org.name = updates['name']
+                if 'slug' in updates:
+                    org.slug = updates['slug']
+                if 'is_active' in updates:
+                    org.is_active = updates['is_active']
+                if 'settings' in updates:
+                    org.settings = json.dumps(updates['settings'])
+                return True
+        except Exception as e:
+            logger.error(f"Error updating organization: {str(e)}")
+            return False
+
+    def delete_organization(self, org_id: int) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                org = session.query(OrganizationRecord).filter_by(id=org_id).first()
+                if org:
+                    session.delete(org)
+                    session.query(OrganizationMemberRecord).filter_by(org_id=org_id).delete()
+                    logger.info(f"Organization deleted: {org_id}")
+                    return True
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting organization: {str(e)}")
+            return False
+
+    # ============== ORGANIZATION MEMBER OPERATIONS ==============
+
+    def add_org_member(self, org_id: int, user_id: int, role: str = 'viewer') -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                existing = session.query(OrganizationMemberRecord).filter_by(
+                    org_id=org_id, user_id=user_id
+                ).first()
+                if existing:
+                    existing.role = role
+                    existing.is_active = True
+                    return existing.to_dict()
+                member = OrganizationMemberRecord(
+                    org_id=org_id, user_id=user_id, role=role,
+                )
+                session.add(member)
+                session.flush()
+                return member.to_dict()
+        except Exception as e:
+            logger.error(f"Error adding org member: {str(e)}")
+            return None
+
+    def remove_org_member(self, org_id: int, user_id: int) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                deleted = session.query(OrganizationMemberRecord).filter_by(
+                    org_id=org_id, user_id=user_id
+                ).delete()
+                return deleted > 0
+        except Exception as e:
+            logger.error(f"Error removing org member: {str(e)}")
+            return False
+
+    def update_org_member_role(self, org_id: int, user_id: int, role: str) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                member = session.query(OrganizationMemberRecord).filter_by(
+                    org_id=org_id, user_id=user_id
+                ).first()
+                if not member:
+                    return False
+                member.role = role
+                return True
+        except Exception as e:
+            logger.error(f"Error updating org member role: {str(e)}")
+            return False
+
+    def get_org_members(self, org_id: int) -> List[Dict]:
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                members = session.query(OrganizationMemberRecord).filter_by(
+                    org_id=org_id
+                ).all()
+                result = []
+                for m in members:
+                    user = session.query(UserRecord).filter_by(id=m.user_id).first()
+                    entry = m.to_dict()
+                    entry['username'] = user.username if user else None
+                    entry['email'] = user.email if user else None
+                    result.append(entry)
+                return result
+        except Exception as e:
+            logger.error(f"Error retrieving org members: {str(e)}")
+            return []
+
+    def get_user_organizations(self, user_id: int) -> List[Dict]:
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                memberships = session.query(OrganizationMemberRecord).filter_by(
+                    user_id=user_id, is_active=True
+                ).all()
+                result = []
+                for m in memberships:
+                    org = session.query(OrganizationRecord).filter_by(id=m.org_id).first()
+                    if org:
+                        entry = org.to_dict()
+                        entry['member_role'] = m.role
+                        entry['membership_id'] = m.id
+                        result.append(entry)
+                return result
+        except Exception as e:
+            logger.error(f"Error retrieving user organizations: {str(e)}")
+            return []
+
+    def get_org_member_role(self, org_id: int, user_id: int) -> Optional[str]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                member = session.query(OrganizationMemberRecord).filter_by(
+                    org_id=org_id, user_id=user_id, is_active=True
+                ).first()
+                return member.role if member else None
+        except Exception as e:
+            logger.error(f"Error retrieving org member role: {str(e)}")
+            return None
+
+    # ============== TENANT-SCOPED QUERIES ==============
+
+    def get_packets_for_org(self, org_id: Optional[int], **kwargs) -> Tuple[List[Dict], int]:
+        if org_id is None:
+            return self.get_packets(**kwargs)
+        if not self.SessionLocal:
+            return [], 0
+        try:
+            with self.get_session() as session:
+                query = session.query(PacketRecord).filter(PacketRecord.org_id == org_id)
+                if kwargs.get('start_time'):
+                    query = query.filter(PacketRecord.timestamp >= kwargs['start_time'])
+                if kwargs.get('end_time'):
+                    query = query.filter(PacketRecord.timestamp <= kwargs['end_time'])
+                if kwargs.get('protocol'):
+                    query = query.filter(PacketRecord.protocol == kwargs['protocol'])
+                if kwargs.get('src_ip'):
+                    query = query.filter(PacketRecord.src_ip.like(f'%{kwargs["src_ip"]}%'))
+                if kwargs.get('dst_ip'):
+                    query = query.filter(PacketRecord.dst_ip.like(f'%{kwargs["dst_ip"]}%'))
+                if kwargs.get('src_port') is not None:
+                    query = query.filter(PacketRecord.src_port == kwargs['src_port'])
+                if kwargs.get('dst_port') is not None:
+                    query = query.filter(PacketRecord.dst_port == kwargs['dst_port'])
+                if kwargs.get('service'):
+                    query = query.filter(PacketRecord.service.like(f'%{kwargs["service"]}%'))
+                if kwargs.get('tcp_flags') is not None:
+                    query = query.filter(PacketRecord.tcp_flags == kwargs['tcp_flags'])
+                if kwargs.get('min_length') is not None:
+                    query = query.filter(PacketRecord.length >= kwargs['min_length'])
+                if kwargs.get('max_length') is not None:
+                    query = query.filter(PacketRecord.length <= kwargs['max_length'])
+                if kwargs.get('search'):
+                    sp = f'%{kwargs["search"]}%'
+                    query = query.filter(or_(
+                        PacketRecord.src_ip.like(sp),
+                        PacketRecord.dst_ip.like(sp),
+                        PacketRecord.protocol.like(sp),
+                        PacketRecord.service.like(sp),
+                    ))
+                limit = kwargs.get('limit', 1000)
+                offset = kwargs.get('offset', 0)
+                total = query.count()
+                packets = query.order_by(PacketRecord.timestamp.desc()).offset(offset).limit(limit).all()
+                return [p.to_dict() for p in packets], total
+        except Exception as e:
+            logger.error(f"Error retrieving org packets: {str(e)}")
+            return [], 0
+
+    def get_alerts_for_org(self, org_id: Optional[int], **kwargs) -> Tuple[List[Dict], int]:
+        if org_id is None:
+            return self.get_alerts(**kwargs)
+        if not self.SessionLocal:
+            return [], 0
+        try:
+            with self.get_session() as session:
+                query = session.query(AlertRecord).filter(AlertRecord.org_id == org_id)
+                if kwargs.get('start_time'):
+                    query = query.filter(AlertRecord.timestamp >= kwargs['start_time'])
+                if kwargs.get('end_time'):
+                    query = query.filter(AlertRecord.timestamp <= kwargs['end_time'])
+                if kwargs.get('severity'):
+                    query = query.filter(AlertRecord.severity == kwargs['severity'])
+                if kwargs.get('alert_type'):
+                    query = query.filter(AlertRecord.alert_type == kwargs['alert_type'])
+                if kwargs.get('source_ip'):
+                    query = query.filter(AlertRecord.source_ip.like(f'%{kwargs["source_ip"]}%'))
+                if kwargs.get('destination_ip'):
+                    query = query.filter(AlertRecord.destination_ip.like(f'%{kwargs["destination_ip"]}%'))
+                if kwargs.get('title'):
+                    query = query.filter(AlertRecord.title.like(f'%{kwargs["title"]}%'))
+                if kwargs.get('resolved') is not None:
+                    query = query.filter(AlertRecord.resolved == kwargs['resolved'])
+                if kwargs.get('search'):
+                    sp = f'%{kwargs["search"]}%'
+                    query = query.filter(or_(
+                        AlertRecord.title.like(sp),
+                        AlertRecord.description.like(sp),
+                        AlertRecord.source_ip.like(sp),
+                        AlertRecord.destination_ip.like(sp),
+                        AlertRecord.alert_type.like(sp),
+                    ))
+                limit = kwargs.get('limit', 100)
+                offset = kwargs.get('offset', 0)
+                total = query.count()
+                alerts = query.order_by(AlertRecord.timestamp.desc()).offset(offset).limit(limit).all()
+                return [a.to_dict() for a in alerts], total
+        except Exception as e:
+            logger.error(f"Error retrieving org alerts: {str(e)}")
+            return [], 0
+
+    def get_devices_for_org(self, org_id: Optional[int], **kwargs) -> Tuple[List[Dict], int]:
+        if org_id is None:
+            return self.get_devices(**kwargs)
+        if not self.SessionLocal:
+            return [], 0
+        try:
+            with self.get_session() as session:
+                query = session.query(DeviceRecord).filter(DeviceRecord.org_id == org_id)
+                if kwargs.get('ip_address'):
+                    query = query.filter(DeviceRecord.ip_address.like(f'%{kwargs["ip_address"]}%'))
+                if kwargs.get('mac_address'):
+                    query = query.filter(DeviceRecord.mac_address.like(f'%{kwargs["mac_address"]}%'))
+                if kwargs.get('hostname'):
+                    query = query.filter(DeviceRecord.hostname.like(f'%{kwargs["hostname"]}%'))
+                if kwargs.get('device_type'):
+                    query = query.filter(DeviceRecord.device_type == kwargs['device_type'])
+                if kwargs.get('search'):
+                    sp = f'%{kwargs["search"]}%'
+                    query = query.filter(or_(
+                        DeviceRecord.ip_address.like(sp),
+                        DeviceRecord.mac_address.like(sp),
+                        DeviceRecord.hostname.like(sp),
+                        DeviceRecord.device_type.like(sp),
+                    ))
+                limit = kwargs.get('limit', 1000)
+                offset = kwargs.get('offset', 0)
+                total = query.count()
+                devices = query.order_by(DeviceRecord.last_seen.desc()).offset(offset).limit(limit).all()
+                return [d.to_dict() for d in devices], total
+        except Exception as e:
+            logger.error(f"Error retrieving org devices: {str(e)}")
+            return [], 0
+
     def cleanup_old_records(self, days: int = 30) -> int:
         """Delete records older than N days"""
         if not self.SessionLocal:

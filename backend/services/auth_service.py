@@ -24,6 +24,22 @@ logger = logging.getLogger('packet_peeper')
 
 VALID_ROLES = {"admin", "operator", "viewer"}
 
+RBAC_ENDPOINT_RULES = {
+    '/api/sniffing/start': {'roles': {'admin', 'operator'}},
+    '/api/sniffing/stop': {'roles': {'admin', 'operator'}},
+    '/api/settings': {'roles': {'admin'}, 'methods': {'PUT'}},
+    '/api/clear_all': {'roles': {'admin'}},
+    '/api/test-mode': {'roles': {'admin'}},
+    '/api/debug/scan-tracker': {'roles': {'admin'}},
+    '/api/ml/retrain': {'roles': {'admin', 'operator'}},
+    '/api/ml/config': {'roles': {'admin'}, 'methods': {'POST'}},
+    '/api/alerts/clear': {'roles': {'admin'}},
+    '/api/logs/clear': {'roles': {'admin'}},
+    '/api/network/scan': {'roles': {'admin', 'operator'}},
+    '/api/admin': {'roles': {'admin'}, 'prefix': True},
+    '/api/organizations': {'roles': {'admin', 'operator'}, 'prefix': True, 'write_roles': {'admin'}},
+}
+
 
 class AuthService:
     """Centralized auth service with JWT sessions and device fingerprinting."""
@@ -125,7 +141,8 @@ class AuthService:
     # ============== REGISTRATION ==============
 
     def register_user(self, username: str, email: str, password: str,
-                      device_info: Optional[Dict] = None) -> Tuple[bool, str, Optional[Dict]]:
+                      device_info: Optional[Dict] = None,
+                      default_org_id: Optional[int] = None) -> Tuple[bool, str, Optional[Dict]]:
         normalized_email = email.strip().lower()
 
         valid, msg = self.validate_username(username)
@@ -164,6 +181,7 @@ class AuthService:
             'created_at': datetime.utcnow().isoformat(),
             'is_admin': role == "admin",
             'role': role,
+            'default_org_id': default_org_id,
             'device_info': device_info or {},
             'last_login': None,
             'login_attempts': 0,
@@ -229,6 +247,7 @@ class AuthService:
             'sub': user.get('username'),
             'uid': user.get('id'),
             'role': user.get('role', 'operator'),
+            'oid': user.get('default_org_id'),
             'sid': session_id,
             'dfp': device_fingerprint,
             'iat': int(time.time()),
@@ -267,6 +286,7 @@ class AuthService:
             'created_at': user.get('created_at'),
             'last_login': now.isoformat(),
             'role': user.get('role', 'operator'),
+            'default_org_id': user.get('default_org_id'),
             'device_info': device_payload,
         }
 
@@ -320,6 +340,7 @@ class AuthService:
             if not user or not user.get('is_active', True):
                 return None, "user_inactive"
             payload['role'] = user.get('role', payload.get('role'))
+            payload['oid'] = user.get('default_org_id', payload.get('oid'))
 
             self.db_service.touch_session(token_hash)
         else:
@@ -338,16 +359,19 @@ class AuthService:
             return None
 
         sessions = self.db_service.get_user_sessions(user.get('id'), include_expired=False)
+        organizations = self.db_service.get_user_organizations(user.get('id'))
 
         return {
             'username': user.get('username'),
             'email': user.get('email'),
             'role': user.get('role', 'operator'),
+            'default_org_id': user.get('default_org_id'),
             'created_at': user.get('created_at'),
             'last_login': user.get('last_login'),
             'device_info': user.get('device_info', {}),
             'active_sessions': sessions,
             'active_session_count': len(sessions),
+            'organizations': organizations,
         }
 
     def update_profile(self, username: str, updates: Dict) -> Tuple[bool, str]:

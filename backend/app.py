@@ -201,8 +201,14 @@ def handle_preflight_and_guards():
         g.current_user_id = payload.get('uid')
         g.current_role = payload.get('role')
         g.current_session_id = payload.get('sid')
+        g.org_id = payload.get('oid')
 
-    return None
+        rbac_result = ext._check_rbac()
+        if rbac_result:
+            code, msg = rbac_result
+            return jsonify({'error': msg}), code
+
+        return None
 
 
 @app.after_request
@@ -226,7 +232,7 @@ def after_request(response):
     return response
 
 # ============== REGISTER BLUEPRINTS ==============
-from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml
+from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml, admin, organizations
 
 blueprints = [
     auth.bp,
@@ -242,6 +248,8 @@ blueprints = [
     history.bp,
     search.bp,
     ml.bp,
+    admin.bp,
+    organizations.bp,
 ]
 
 for bp in blueprints:

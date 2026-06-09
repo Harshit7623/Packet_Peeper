@@ -822,6 +822,148 @@ class ApiService {
       body: JSON.stringify(config),
     });
   }
+
+  // ==================== Admin ====================
+
+  async listUsers() {
+    return this.request<{
+      users: Array<{
+        id: number;
+        username: string;
+        email: string;
+        role: string;
+        is_active: boolean;
+        is_admin: boolean;
+        created_at: string | null;
+        last_login: string | null;
+      }>;
+      total: number;
+    }>('/api/admin/users');
+  }
+
+  async getUser(username: string) {
+    return this.request<{
+      user: Record<string, unknown>;
+    }>(`/api/admin/users/${encodeURIComponent(username)}`);
+  }
+
+  async updateUserRole(username: string, role: string) {
+    return this.request<{ message: string; username: string; role: string }>(
+      `/api/admin/users/${encodeURIComponent(username)}/role`,
+      { method: 'PUT', body: JSON.stringify({ role }) }
+    );
+  }
+
+  async toggleUserActive(username: string, isActive: boolean) {
+    return this.request<{ message: string; username: string; is_active: boolean }>(
+      `/api/admin/users/${encodeURIComponent(username)}/active`,
+      { method: 'PUT', body: JSON.stringify({ is_active: isActive }) }
+    );
+  }
+
+  async deleteUser(username: string) {
+    return this.request<{ message: string }>(
+      `/api/admin/users/${encodeURIComponent(username)}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  async setUserOrg(username: string, orgId: number | null) {
+    return this.request<{ message: string; username: string; default_org_id: number | null }>(
+      `/api/admin/users/${encodeURIComponent(username)}/org`,
+      { method: 'PUT', body: JSON.stringify({ org_id: orgId }) }
+    );
+  }
+
+  async revokeUserSessions(username: string) {
+    return this.request<{ message: string; username: string }>(
+      `/api/admin/users/${encodeURIComponent(username)}/sessions`,
+      { method: 'DELETE' }
+    );
+  }
+
+  // ==================== Organizations ====================
+
+  async listOrganizations() {
+    return this.request<{
+      organizations: Array<{
+        id: number;
+        name: string;
+        slug: string;
+        is_active: boolean;
+        created_at: string;
+        settings?: Record<string, unknown>;
+        member_role?: string;
+        membership_id?: number;
+      }>;
+      total: number;
+    }>('/api/organizations');
+  }
+
+  async createOrganization(name: string, slug?: string, settings?: Record<string, unknown>) {
+    return this.request<{
+      organization: Record<string, unknown>;
+    }>('/api/organizations', {
+      method: 'POST',
+      body: JSON.stringify({ name, slug, settings }),
+    });
+  }
+
+  async getOrganization(orgId: number) {
+    return this.request<{
+      organization: Record<string, unknown>;
+    }>(`/api/organizations/${orgId}`);
+  }
+
+  async updateOrganization(orgId: number, updates: Record<string, unknown>) {
+    return this.request<{ message: string; organization: Record<string, unknown> }>(
+      `/api/organizations/${orgId}`,
+      { method: 'PUT', body: JSON.stringify(updates) }
+    );
+  }
+
+  async deleteOrganization(orgId: number) {
+    return this.request<{ message: string }>(
+      `/api/organizations/${orgId}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  async listOrgMembers(orgId: number) {
+    return this.request<{
+      members: Array<{
+        id: number;
+        org_id: number;
+        user_id: number;
+        role: string;
+        is_active: boolean;
+        username: string | null;
+        email: string | null;
+      }>;
+      total: number;
+    }>(`/api/organizations/${orgId}/members`);
+  }
+
+  async addOrgMember(orgId: number, username: string, role: string = 'viewer') {
+    return this.request<{ member: Record<string, unknown> }>(
+      `/api/organizations/${orgId}/members`,
+      { method: 'POST', body: JSON.stringify({ username, role }) }
+    );
+  }
+
+  async removeOrgMember(orgId: number, userId: number) {
+    return this.request<{ message: string }>(
+      `/api/organizations/${orgId}/members/${userId}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  async updateOrgMemberRole(orgId: number, userId: number, role: string) {
+    return this.request<{ message: string }>(
+      `/api/organizations/${orgId}/members/${userId}/role`,
+      { method: 'PUT', body: JSON.stringify({ role }) }
+    );
+  }
 }
 
 // Export singleton instance
