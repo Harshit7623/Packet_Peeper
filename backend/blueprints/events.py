@@ -31,7 +31,23 @@ def register_events(socketio):
                 if error_code:
                     logger.warning(f"[Socket] Unauthorized connection attempt: {error_code}")
                     return False
-                logger.info(f"[OK] Authenticated socket connection for user: {payload.get('sub')}")
+
+                from flask import request as flask_request
+                ext._register_socket_session(
+                    sid=flask_request.sid,
+                    user=payload.get('sub'),
+                    user_id=payload.get('uid'),
+                    role=payload.get('role'),
+                    org_id=payload.get('oid'),
+                )
+                logger.info(f"[OK] Authenticated socket connection for user: {payload.get('sub')} (role={payload.get('role')})")
+            else:
+                from flask import request as flask_request
+                ext._register_socket_session(
+                    sid=flask_request.sid,
+                    user='anonymous', user_id=0,
+                    role='admin', org_id=None,
+                )
 
             logger.info("[OK] Client connected")
             socketio.emit('connection_status', {
@@ -51,6 +67,8 @@ def register_events(socketio):
 
     @socketio.on('disconnect')
     def handle_disconnect(data=None):
+        from flask import request as flask_request
+        ext._remove_socket_session(flask_request.sid)
         logger.info("[Socket] Client disconnected")
 
     @socketio.on('get_logs')
@@ -60,9 +78,14 @@ def register_events(socketio):
 
     @socketio.on('clear_logs')
     def handle_clear_logs(data=None):
+        rbac = ext._check_socket_rbac('clear_logs')
+        if rbac:
+            code, msg = rbac
+            socketio.emit('error', {'event': 'clear_logs', 'code': code, 'message': msg})
+            return
         with ext.logs_lock:
             ext.logs.clear()
-            ext.add_log('info', 'System', 'Logs cleared')
+        ext.add_log('info', 'System', 'Logs cleared')
         with ext.logs_lock:
             socketio.emit('logs_list', list(ext.logs))
 
@@ -73,6 +96,11 @@ def register_events(socketio):
 
     @socketio.on('start_sniffing')
     def handle_start_sniffing(data=None):
+        rbac = ext._check_socket_rbac('start_sniffing')
+        if rbac:
+            code, msg = rbac
+            socketio.emit('sniffing_status', {'status': 'error', 'message': msg})
+            return
         try:
             payload = data or {}
             interface = payload.get('interface') or CAPTURE_INTERFACE
@@ -102,6 +130,11 @@ def register_events(socketio):
 
     @socketio.on('stop_sniffing')
     def handle_stop_sniffing(data=None):
+        rbac = ext._check_socket_rbac('stop_sniffing')
+        if rbac:
+            code, msg = rbac
+            socketio.emit('sniffing_status', {'status': 'error', 'message': msg})
+            return
         try:
             if ext.sniffer:
                 ext.sniffer.stop_sniffing()
@@ -117,6 +150,11 @@ def register_events(socketio):
 
     @socketio.on('scan_devices')
     def handle_scan_devices(data=None):
+        rbac = ext._check_socket_rbac('scan_devices')
+        if rbac:
+            code, msg = rbac
+            socketio.emit('devices_update', {'devices': [], 'error': msg})
+            return
         try:
             if ext.sniffer:
                 devices = ext._collect_device_snapshot()

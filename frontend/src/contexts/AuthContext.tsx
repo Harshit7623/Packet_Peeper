@@ -18,6 +18,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   error: string | null;
   isAdmin: boolean;
+  isOperator: boolean;
   login: (identifier: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, passwordConfirm: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -157,6 +158,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const clearError = useCallback(() => setError(null), []);
 
   const isAdmin = user?.role === 'admin';
+  const isOperator = user?.role === 'operator' || isAdmin;
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -166,13 +168,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       user,
       error,
       isAdmin,
+      isOperator,
       login,
       logout,
       register,
       refreshStatus,
       clearError,
     }),
-    [authEnabled, isAuthenticated, isLoading, user, error, isAdmin, login, logout, register, refreshStatus, clearError]
+    [authEnabled, isAuthenticated, isLoading, user, error, isAdmin, isOperator, login, logout, register, refreshStatus, clearError]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -17,7 +17,8 @@ import {
   Terminal,
   Sparkles,
   Brain,
-  UserCog
+  UserCog,
+  ClipboardList
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -35,6 +36,7 @@ const sidebarItems = [
   { icon: LineChart, label: "Insights", sub: "Deep Analytics", href: "/analytics" },
   { icon: Server, label: "System", sub: "Core Health", href: "/system" },
   { icon: FileText, label: "History", sub: "Event Stream", href: "/logs" },
+  { icon: ClipboardList, label: "Reports", sub: "Generated", href: "/reports" },
   { icon: UserCircle, label: "Profile", sub: "Operator ID", href: "/profile" },
   { icon: Settings, label: "Settings", sub: "Config", href: "/settings" },
 ];

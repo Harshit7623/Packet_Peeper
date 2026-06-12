@@ -13,13 +13,22 @@ import io
 
 logger = logging.getLogger(__name__)
 
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    logger.info("[Report] Matplotlib not available; PDF charts disabled")
+
 # Try importing PDF libraries; gracefully degrade if unavailable
 try:
     from reportlab.lib.pagesizes import letter, A4
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     REPORTLAB_AVAILABLE = True
 except ImportError:
@@ -142,13 +151,11 @@ class ReportGenerator:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = filename or f"report_{timestamp}.pdf"
             filepath = self.output_dir / filename
-            
-            # Create PDF document
+
             doc = SimpleDocTemplate(str(filepath), pagesize=letter)
             story = []
             styles = getSampleStyleSheet()
-            
-            # Title
+
             title_style = ParagraphStyle(
                 'CustomTitle',
                 parent=styles['Heading1'],
@@ -159,15 +166,14 @@ class ReportGenerator:
             )
             story.append(Paragraph(title, title_style))
             story.append(Spacer(1, 0.3 * inch))
-            
-            # Report metadata
+
             meta_data = [
                 ['Report Generated', datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
                 ['Total Packets', str(len(packets))],
                 ['Total Alerts', str(len(alerts))],
                 ['Critical Alerts', str(len([a for a in alerts if a.get('severity') == 'critical']))],
             ]
-            
+
             meta_table = Table(meta_data, colWidths=[2.5 * inch, 4 * inch])
             meta_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#e8f0f8')),
@@ -180,23 +186,21 @@ class ReportGenerator:
             ]))
             story.append(meta_table)
             story.append(Spacer(1, 0.5 * inch))
-            
-            # Alerts summary
+
             if alerts:
                 story.append(Paragraph("Security Alerts Summary", styles['Heading2']))
-                
-                # Severity breakdown
+
                 severity_counts = {
                     'critical': len([a for a in alerts if a.get('severity') == 'critical']),
                     'high': len([a for a in alerts if a.get('severity') == 'high']),
                     'medium': len([a for a in alerts if a.get('severity') == 'medium']),
                     'low': len([a for a in alerts if a.get('severity') == 'low']),
                 }
-                
+
                 severity_data = [['Severity', 'Count']]
                 for sev, count in severity_counts.items():
                     severity_data.append([sev.capitalize(), str(count)])
-                
+
                 sev_table = Table(severity_data, colWidths=[2 * inch, 2 * inch])
                 sev_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -209,18 +213,32 @@ class ReportGenerator:
                 ]))
                 story.append(sev_table)
                 story.append(Spacer(1, 0.3 * inch))
-                
-                # Top alerts
+
+                if MATPLOTLIB_AVAILABLE and any(severity_counts.values()):
+                    buf = io.BytesIO()
+                    fig, ax = plt.subplots(figsize=(4, 3))
+                    labels = [s.capitalize() for s in severity_counts if severity_counts[s] > 0]
+                    values = [severity_counts[s] for s in severity_counts if severity_counts[s] > 0]
+                    sev_colors = {'Critical': '#dc2626', 'High': '#ea580c', 'Medium': '#ca8a04', 'Low': '#16a34a'}
+                    chart_colors = [sev_colors.get(l, '#6b7280') for l in labels]
+                    ax.pie(values, labels=labels, colors=chart_colors, autopct='%1.0f%%', startangle=90)
+                    ax.set_title('Alert Severity Distribution', fontsize=10)
+                    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                    buf.seek(0)
+                    plt.close(fig)
+                    story.append(Image(buf, width=3.5 * inch, height=2.6 * inch))
+                    story.append(Spacer(1, 0.3 * inch))
+
                 story.append(Paragraph("Top Alerts", styles['Heading3']))
                 alert_rows = [['Time', 'Type', 'Source IP', 'Severity']]
-                for alert in alerts[:10]:  # Top 10
+                for alert in alerts[:10]:
                     alert_rows.append([
                         alert.get('timestamp', '')[:19],
                         alert.get('alert_type', 'Unknown')[:15],
                         alert.get('source_ip', 'N/A'),
                         alert.get('severity', 'Unknown'),
                     ])
-                
+
                 alert_table = Table(alert_rows, colWidths=[1.5 * inch, 1.5 * inch, 1.5 * inch, 1 * inch])
                 alert_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -233,21 +251,19 @@ class ReportGenerator:
                 ]))
                 story.append(alert_table)
                 story.append(PageBreak())
-            
-            # Packet statistics
+
             if packets:
                 story.append(Paragraph("Packet Statistics", styles['Heading2']))
-                
-                # Protocol breakdown
+
                 protocols = {}
                 for pkt in packets:
                     proto = pkt.get('protocol', 'Unknown')
                     protocols[proto] = protocols.get(proto, 0) + 1
-                
+
                 proto_data = [['Protocol', 'Count']]
                 for proto, count in sorted(protocols.items(), key=lambda x: x[1], reverse=True):
                     proto_data.append([proto, str(count)])
-                
+
                 proto_table = Table(proto_data, colWidths=[2 * inch, 2 * inch])
                 proto_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -259,12 +275,48 @@ class ReportGenerator:
                     ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')]),
                 ]))
                 story.append(proto_table)
-            
-            # Build PDF
+
+                if MATPLOTLIB_AVAILABLE and protocols:
+                    buf = io.BytesIO()
+                    fig, ax = plt.subplots(figsize=(4.5, 3))
+                    sorted_protos = sorted(protocols.items(), key=lambda x: x[1], reverse=True)[:10]
+                    proto_labels = [p[0] for p in sorted_protos]
+                    proto_values = [p[1] for p in sorted_protos]
+                    ax.bar(proto_labels, proto_values, color='#3b82f6')
+                    ax.set_title('Protocol Distribution (Top 10)', fontsize=10)
+                    ax.set_ylabel('Packet Count', fontsize=8)
+                    ax.tick_params(axis='x', rotation=30, labelsize=7)
+                    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                    buf.seek(0)
+                    plt.close(fig)
+                    story.append(Spacer(1, 0.3 * inch))
+                    story.append(Image(buf, width=4 * inch, height=2.6 * inch))
+
+                if MATPLOTLIB_AVAILABLE and packets:
+                    bandwidth_by_proto = {}
+                    for pkt in packets:
+                        proto = pkt.get('protocol', 'Unknown')
+                        bandwidth_by_proto[proto] = bandwidth_by_proto.get(proto, 0) + pkt.get('length', 0)
+                    if any(bandwidth_by_proto.values()):
+                        buf = io.BytesIO()
+                        fig, ax = plt.subplots(figsize=(4.5, 3))
+                        bw_sorted = sorted(bandwidth_by_proto.items(), key=lambda x: x[1], reverse=True)[:10]
+                        bw_labels = [b[0] for b in bw_sorted]
+                        bw_values = [b[1] for b in bw_sorted]
+                        ax.barh(bw_labels, bw_values, color='#8b5cf6')
+                        ax.set_title('Bandwidth by Protocol (Top 10)', fontsize=10)
+                        ax.set_xlabel('Total Bytes', fontsize=8)
+                        ax.tick_params(axis='y', labelsize=7)
+                        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                        buf.seek(0)
+                        plt.close(fig)
+                        story.append(Spacer(1, 0.3 * inch))
+                        story.append(Image(buf, width=4 * inch, height=2.6 * inch))
+
             doc.build(story)
             logger.info(f"[Report] PDF report generated: {filepath}")
             return filepath
-        
+
         except Exception as e:
             logger.error(f"[ERROR] Error generating PDF report: {str(e)}")
             return None

@@ -78,6 +78,11 @@ class SocketService {
   private setupEventListeners(): void {
     if (!this.socket) return;
 
+    // Socket RBAC error events
+    this.socket.on('error', (err: any) => {
+      console.warn('Socket permission error:', err);
+    });
+
     // Packet events
     this.socket.on('new_packet', (packet: any) => {
       useMonitorStore.getState().addPacket(packet);

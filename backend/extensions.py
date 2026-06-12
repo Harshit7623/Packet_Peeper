@@ -8,6 +8,7 @@ to avoid circular imports between app.py and blueprints.
 import threading
 import datetime
 import time
+import queue
 import logging
 from collections import defaultdict, deque
 
@@ -79,7 +80,6 @@ PUBLIC_API_PATHS = {
     '/api/auth/register',
     '/api/auth/status',
     '/api/health',
-    '/api/reports',
     '/api/system/health',
     '/api/system/info',
     '/api/traffic/flow',
@@ -87,6 +87,10 @@ PUBLIC_API_PATHS = {
 
 # Will be set by app.py after SocketIO is created
 socketio = None
+
+# Socket.IO session store: sid -> {user, user_id, role, org_id}
+_socket_sessions = {}
+_socket_sessions_lock = threading.Lock()
 
 
 def add_log(level: str, source: str, message: str):
@@ -194,7 +198,7 @@ def _persist_traffic_stats(stats: dict) -> None:
         'peak_bandwidth': stats.get('peakBandwidth', 0),
         'average_bandwidth': stats.get('averageBandwidth', 0),
     }
-    db_service.save_traffic_stats(payload)
+    enqueue_task(db_service.save_traffic_stats, payload)
 
 
 def _accumulate_packet_feature(packet_info: dict) -> None:
@@ -283,7 +287,7 @@ def _persist_traffic_features(stats: dict) -> None:
             'bandwidth_bps': stats.get('currentBandwidth', 0),
         }
 
-        db_service.save_traffic_feature(feature)
+        enqueue_task(db_service.save_traffic_feature, feature)
 
         minute_start = datetime.datetime.utcnow().replace(second=0, microsecond=0)
         _traffic_feature_window = {
@@ -405,6 +409,47 @@ def _check_rbac() -> tuple | None:
     return None
 
 
+def _register_socket_session(sid: str, user: str, user_id: int, role: str, org_id=None):
+    with _socket_sessions_lock:
+        _socket_sessions[sid] = {
+            'user': user, 'user_id': user_id,
+            'role': role, 'org_id': org_id,
+        }
+
+
+def _remove_socket_session(sid: str):
+    with _socket_sessions_lock:
+        _socket_sessions.pop(sid, None)
+
+
+def _get_socket_session(sid: str) -> dict | None:
+    with _socket_sessions_lock:
+        return _socket_sessions.get(sid)
+
+
+def _check_socket_rbac(event_name: str) -> tuple | None:
+    from services.auth_service import RBAC_SOCKET_RULES
+    from flask import request as flask_request
+
+    rule = RBAC_SOCKET_RULES.get(event_name)
+    if not rule:
+        return None
+
+    sid = getattr(flask_request, 'sid', None)
+    if not sid:
+        return (403, 'Unauthorized socket connection')
+
+    session = _get_socket_session(sid)
+    if not session:
+        return (403, 'Socket session not found')
+
+    allowed_roles = rule.get('roles', set())
+    if session.get('role') not in allowed_roles:
+        return (403, f'Insufficient permissions for {event_name}')
+
+    return None
+
+
 def broadcast_alert(alert_type: str, message: str, severity: str = 'medium',
                      source: str = 'System', additional_info: dict = None) -> bool:
     try:
@@ -490,7 +535,7 @@ def packet_callback(packet_info: dict):
                         old_ts, old_hash = recent_packet_hashes.popleft()
                         recent_packet_hash_set.discard(old_hash)
             if should_save:
-                db_service.save_packet(packet_info)
+                enqueue_task(db_service.save_packet, packet_info)
             _accumulate_packet_feature(packet_info)
         if sniffer:
             stats = sniffer.get_statistics()
@@ -524,3 +569,60 @@ def _collect_device_snapshot() -> list[dict]:
     if getattr(sniffer, 'default_gateway', None):
         merged = [d for d in merged if (d.get('ipAddress') or d.get('ip_address')) != sniffer.default_gateway]
     return merged
+
+
+_api_cache = {}
+_api_cache_lock = threading.Lock()
+
+
+def cached_api(ttl_seconds: int = 30):
+    def decorator(func):
+        from functools import wraps
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            cache_key = func.__name__ + ':' + str(sorted(request.args.items()))
+            now = time.time()
+            with _api_cache_lock:
+                entry = _api_cache.get(cache_key)
+                if entry and now - entry['ts'] < ttl_seconds:
+                    return entry['data']
+            result = func(*args, **kwargs)
+            with _api_cache_lock:
+                _api_cache[cache_key] = {'data': result, 'ts': now}
+            return result
+        return wrapper
+    return decorator
+
+
+_task_queue = queue.Queue()
+_task_thread = None
+_task_thread_stop = threading.Event()
+
+
+def _task_worker():
+    while not _task_thread_stop.is_set():
+        try:
+            task = _task_queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if task is None:
+            break
+        fn, args, kwargs = task
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"[TaskQueue] Error executing {getattr(fn, '__name__', fn)}: {e}")
+
+
+def enqueue_task(fn, *args, **kwargs):
+    global _task_thread
+    if _task_thread is None or not _task_thread.is_alive():
+        _task_thread_stop.clear()
+        _task_thread = threading.Thread(target=_task_worker, daemon=True, name="bg-task-worker")
+        _task_thread.start()
+    _task_queue.put((fn, args, kwargs))
+
+
+def shutdown_task_queue():
+    _task_thread_stop.set()
+    _task_queue.put(None)

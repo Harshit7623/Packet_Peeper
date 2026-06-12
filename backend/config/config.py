@@ -192,6 +192,7 @@ TRAFFIC_UPDATE_INTERVAL = float(os.getenv("TRAFFIC_UPDATE_INTERVAL", 1.0))
 REPORT_FORMATS = ["pdf", "csv", "json"]
 REPORT_RETENTION_DAYS = int(os.getenv("REPORT_RETENTION_DAYS", 30))
 PDF_REPORT_LOGO_PATH = os.getenv("PDF_REPORT_LOGO_PATH", None)
+SCHEDULED_REPORT_INTERVAL = int(os.getenv("SCHEDULED_REPORT_INTERVAL", 3600))
 
 # ============== MOBILE (Android) ==============
 MOBILE_API_ENABLED = os.getenv("MOBILE_API_ENABLED", "True").lower() == "true"

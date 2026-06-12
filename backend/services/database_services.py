@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, and_, or_, func, Index
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, and_, or_, func, Index, inspect, text
 try:
     from sqlalchemy.orm import declarative_base
 except ImportError:
@@ -321,29 +321,64 @@ class TrafficFeatureRecord(Base):
 class ReportRecord(Base):
     """Generated report metadata"""
     __tablename__ = "reports"
-    
+
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
-    report_type = Column(String(20))  # pdf, csv, json
+    report_type = Column(String(20)) # pdf, csv, json
     start_date = Column(DateTime)
     end_date = Column(DateTime)
     file_path = Column(String(500))
     total_packets = Column(Integer)
     total_alerts = Column(Integer)
     file_size = Column(Integer)
-    
+    org_id = Column(Integer)
+
     def to_dict(self):
         return {
             'id': self.id,
-            'timestamp': self.timestamp.isoformat(),
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'report_type': self.report_type,
-            'start_date': self.start_date.isoformat(),
-            'end_date': self.end_date.isoformat(),
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'end_date': self.end_date.isoformat() if self.end_date else None,
             'file_path': self.file_path,
             'total_packets': self.total_packets,
             'total_alerts': self.total_alerts,
             'file_size': self.file_size,
+        'org_id': self.org_id,
+    }
+
+
+class ScheduledReportRecord(Base):
+    """Scheduled report configuration for auto-generation"""
+    __tablename__ = "scheduled_reports"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    report_type = Column(String(20), default='json')
+    frequency = Column(String(20), default='daily')
+    start_date_offset_days = Column(Integer, default=1)
+    end_date_offset_days = Column(Integer, default=0)
+    severity = Column(String(20), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_run_at = Column(DateTime, nullable=True)
+    org_id = Column(Integer, nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'report_type': self.report_type,
+            'frequency': self.frequency,
+            'start_date_offset_days': self.start_date_offset_days,
+            'end_date_offset_days': self.end_date_offset_days,
+            'severity': self.severity,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_run_at': self.last_run_at.isoformat() if self.last_run_at else None,
+            'org_id': self.org_id,
         }
+
 
 # ============== DATABASE SERVICE CLASS ==============
 
@@ -370,6 +405,7 @@ class DatabaseService:
             
             # Create all tables
             Base.metadata.create_all(self.engine)
+            self._ensure_schema()
             logger.info(f"[OK] Database initialized: {DB_ENGINE}")
             self.ready = True
             
@@ -387,6 +423,31 @@ class DatabaseService:
             'engine': DB_ENGINE,
             'error': self.error,
         }
+
+    def _ensure_schema(self):
+        """Add missing columns to existing tables for schema evolution."""
+        if not self.engine:
+            return
+        try:
+            inspector = inspect(self.engine)
+            migrations = [
+                ('users', 'default_org_id', 'INTEGER'),
+                ('packets', 'org_id', 'INTEGER'),
+                ('alerts', 'org_id', 'INTEGER'),
+                ('devices', 'org_id', 'INTEGER'),
+                ('reports', 'org_id', 'INTEGER'),
+            ]
+            for table_name, column_name, col_type in migrations:
+                if table_name in inspector.get_table_names():
+                    existing_cols = {c['name'] for c in inspector.get_columns(table_name)}
+                    if column_name not in existing_cols:
+                        logger.info(f"[DB] Adding missing column {table_name}.{column_name}")
+                        with self.get_session() as session:
+                            session.execute(
+                                text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {col_type}')
+                            )
+        except Exception as e:
+            logger.warning(f"[DB] Schema migration check failed: {e}")
     
     @contextmanager
     def get_session(self) -> Session:
@@ -818,50 +879,73 @@ class DatabaseService:
             return []
 
     def get_traffic_features_aggregated(self,
-                                        start_time: datetime,
-                                        end_time: datetime,
-                                        bucket_minutes: int = 60) -> List[Dict]:
+            start_time: datetime, end_time: datetime,
+            bucket_minutes: int = 60) -> List[Dict]:
         """Aggregate 1-min traffic features into larger time buckets for charting.
 
         bucket_minutes: 5, 15, 60, 360, 1440 (1h, 6h, 1d)
         Returns list of dicts with summed/averaged values per bucket.
+        Uses SQL GROUP BY to avoid loading all rows into memory.
         """
         if not self.SessionLocal:
             return []
         try:
             with self.get_session() as session:
-                rows = session.query(TrafficFeatureRecord).filter(
+                bucket_sec = bucket_minutes * 60
+                bucket_label = func.strftime(
+                    '%Y-%m-%dT%H:%M:%S',
+                    func.strftime('%s', TrafficFeatureRecord.window_start) / bucket_sec * bucket_sec,
+                    'unixepoch'
+                ).label('bucket_start')
+
+                agg = session.query(
+                    bucket_label,
+                    func.sum(TrafficFeatureRecord.total_packets).label('total_packets'),
+                    func.sum(TrafficFeatureRecord.total_bytes).label('total_bytes'),
+                    func.sum(TrafficFeatureRecord.tcp_packets).label('tcp_packets'),
+                    func.sum(TrafficFeatureRecord.udp_packets).label('udp_packets'),
+                    func.sum(TrafficFeatureRecord.icmp_packets).label('icmp_packets'),
+                    func.sum(TrafficFeatureRecord.other_packets).label('other_packets'),
+                    func.avg(TrafficFeatureRecord.bandwidth_bps).label('bandwidth_bps'),
+                    func.max(TrafficFeatureRecord.unique_src_ips).label('unique_src_ips'),
+                    func.max(TrafficFeatureRecord.unique_dst_ips).label('unique_dst_ips'),
+                    func.max(TrafficFeatureRecord.unique_dst_ports).label('unique_dst_ports'),
+                    func.sum(TrafficFeatureRecord.syn_count).label('syn_count'),
+                    func.avg(TrafficFeatureRecord.syn_ack_ratio).label('syn_ack_ratio'),
+                    func.sum(TrafficFeatureRecord.dns_queries).label('dns_queries'),
+                    func.sum(TrafficFeatureRecord.arp_packets).label('arp_packets'),
+                    func.count().label('sample_count'),
+                ).filter(
                     and_(
                         TrafficFeatureRecord.window_start >= start_time,
                         TrafficFeatureRecord.window_start <= end_time,
                     )
-                ).order_by(TrafficFeatureRecord.window_start.asc()).all()
+                ).group_by(bucket_label).order_by(bucket_label).all()
 
-            if not rows:
-                return []
-
-            bucket_sec = bucket_minutes * 60
-            buckets = []
-            current_bucket_start = None
-            current_rows = []
-
-            for row in rows:
-                ts = row.window_start
-                bucket_ts = datetime.utcfromtimestamp(
-                    (ts.timestamp() // bucket_sec) * bucket_sec
-                )
-                if current_bucket_start is None or bucket_ts != current_bucket_start:
-                    if current_rows:
-                        buckets.append(self._aggregate_feature_bucket(current_bucket_start, current_rows))
-                    current_bucket_start = bucket_ts
-                    current_rows = [row]
-                else:
-                    current_rows.append(row)
-
-            if current_rows:
-                buckets.append(self._aggregate_feature_bucket(current_bucket_start, current_rows))
-
-            return buckets
+                result = []
+                for row in agg:
+                    total_packets = row.total_packets or 0
+                    total_bytes = row.total_bytes or 0
+                    result.append({
+                        'window_start': row.bucket_start if isinstance(row.bucket_start, str) else row.bucket_start.isoformat(),
+                        'total_packets': total_packets,
+                        'total_bytes': total_bytes,
+                        'tcp_packets': row.tcp_packets or 0,
+                        'udp_packets': row.udp_packets or 0,
+                        'icmp_packets': row.icmp_packets or 0,
+                        'other_packets': row.other_packets or 0,
+                        'avg_packet_size': round(total_bytes / max(total_packets, 1), 2),
+                        'unique_src_ips': row.unique_src_ips or 0,
+                        'unique_dst_ips': row.unique_dst_ips or 0,
+                        'unique_dst_ports': row.unique_dst_ports or 0,
+                        'syn_count': row.syn_count or 0,
+                        'syn_ack_ratio': round(row.syn_ack_ratio or 0, 4),
+                        'dns_queries': row.dns_queries or 0,
+                        'arp_packets': row.arp_packets or 0,
+                        'bandwidth_bps': round(row.bandwidth_bps or 0, 2),
+                        'sample_count': row.sample_count or 0,
+                    })
+                return result
         except Exception as e:
             logger.error(f"Error aggregating traffic features: {str(e)}")
             return []
@@ -1038,13 +1122,147 @@ class DatabaseService:
                     total_packets=report_info.get('total_packets', 0),
                     total_alerts=report_info.get('total_alerts', 0),
                     file_size=report_info.get('file_size', 0),
+                    org_id=report_info.get('org_id'),
                 )
                 session.add(report)
-            return True
+                return True
         except Exception as e:
             logger.error(f"Error saving report: {str(e)}")
             return False
-    
+
+    def get_reports(self, org_id=None, limit=50, offset=0):
+        if not self.SessionLocal:
+            return [], 0
+        try:
+            with self.get_session() as session:
+                query = session.query(ReportRecord)
+                if org_id is not None:
+                    query = query.filter(ReportRecord.org_id == org_id)
+                total = query.count()
+                reports = query.order_by(ReportRecord.timestamp.desc()).offset(offset).limit(limit).all()
+                return [r.to_dict() for r in reports], total
+        except Exception as e:
+            logger.error(f"Error getting reports: {str(e)}")
+            return [], 0
+
+    def get_report(self, report_id: int, org_id=None):
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                query = session.query(ReportRecord).filter(ReportRecord.id == report_id)
+                if org_id is not None:
+                    query = query.filter(ReportRecord.org_id == org_id)
+                report = query.first()
+                return report.to_dict() if report else None
+        except Exception as e:
+            logger.error(f"Error getting report: {str(e)}")
+            return None
+
+    def delete_report(self, report_id: int, org_id=None) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                query = session.query(ReportRecord).filter(ReportRecord.id == report_id)
+                if org_id is not None:
+                    query = query.filter(ReportRecord.org_id == org_id)
+                report = query.first()
+                if report:
+                    session.delete(report)
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting report: {str(e)}")
+            return False
+
+    # ============== SCHEDULED REPORT OPERATIONS ==============
+
+    def create_scheduled_report(self, data: Dict) -> Optional[int]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                record = ScheduledReportRecord(
+                    name=data.get('name', 'Scheduled Report'),
+                    report_type=data.get('report_type', 'json'),
+                    frequency=data.get('frequency', 'daily'),
+                    start_date_offset_days=data.get('start_date_offset_days', 1),
+                    end_date_offset_days=data.get('end_date_offset_days', 0),
+                    severity=data.get('severity'),
+                    is_active=data.get('is_active', True),
+                    org_id=data.get('org_id'),
+                )
+                session.add(record)
+                session.flush()
+                return record.id
+        except Exception as e:
+            logger.error(f"Error creating scheduled report: {str(e)}")
+            return None
+
+    def get_scheduled_reports(self, org_id=None, active_only=False):
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                query = session.query(ScheduledReportRecord)
+                if org_id is not None:
+                    query = query.filter(ScheduledReportRecord.org_id == org_id)
+                if active_only:
+                    query = query.filter(ScheduledReportRecord.is_active == True)
+                return [r.to_dict() for r in query.order_by(ScheduledReportRecord.id.desc()).all()]
+        except Exception as e:
+            logger.error(f"Error getting scheduled reports: {str(e)}")
+            return []
+
+    def update_scheduled_report(self, schedule_id: int, data: Dict, org_id=None) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                query = session.query(ScheduledReportRecord).filter(ScheduledReportRecord.id == schedule_id)
+                if org_id is not None:
+                    query = query.filter(ScheduledReportRecord.org_id == org_id)
+                record = query.first()
+                if not record:
+                    return False
+                for key in ('name', 'report_type', 'frequency', 'start_date_offset_days',
+                            'end_date_offset_days', 'severity', 'is_active'):
+                    if key in data:
+                        setattr(record, key, data[key])
+                return True
+        except Exception as e:
+            logger.error(f"Error updating scheduled report: {str(e)}")
+            return False
+
+    def delete_scheduled_report(self, schedule_id: int, org_id=None) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                query = session.query(ScheduledReportRecord).filter(ScheduledReportRecord.id == schedule_id)
+                if org_id is not None:
+                    query = query.filter(ScheduledReportRecord.org_id == org_id)
+                record = query.first()
+                if record:
+                    session.delete(record)
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting scheduled report: {str(e)}")
+            return False
+
+    def update_scheduled_report_last_run(self, schedule_id: int) -> None:
+        if not self.SessionLocal:
+            return
+        try:
+            with self.get_session() as session:
+                record = session.query(ScheduledReportRecord).filter(ScheduledReportRecord.id == schedule_id).first()
+                if record:
+                    record.last_run_at = datetime.utcnow()
+        except Exception as e:
+            logger.error(f"Error updating scheduled report last_run: {str(e)}")
+
     # ============== USER OPERATIONS ==============
     
     def create_user(self, user_data: Dict) -> bool:
@@ -1515,15 +1733,17 @@ class DatabaseService:
             return []
         try:
             with self.get_session() as session:
-                members = session.query(OrganizationMemberRecord).filter_by(
-                    org_id=org_id
-                ).all()
+                rows = (
+                    session.query(OrganizationMemberRecord, UserRecord)
+                    .join(UserRecord, OrganizationMemberRecord.user_id == UserRecord.id)
+                    .filter(OrganizationMemberRecord.org_id == org_id)
+                    .all()
+                )
                 result = []
-                for m in members:
-                    user = session.query(UserRecord).filter_by(id=m.user_id).first()
+                for m, u in rows:
                     entry = m.to_dict()
-                    entry['username'] = user.username if user else None
-                    entry['email'] = user.email if user else None
+                    entry['username'] = u.username if u else None
+                    entry['email'] = u.email if u else None
                     result.append(entry)
                 return result
         except Exception as e:
@@ -1535,17 +1755,21 @@ class DatabaseService:
             return []
         try:
             with self.get_session() as session:
-                memberships = session.query(OrganizationMemberRecord).filter_by(
-                    user_id=user_id, is_active=True
-                ).all()
+                rows = (
+                    session.query(OrganizationMemberRecord, OrganizationRecord)
+                    .join(OrganizationRecord, OrganizationMemberRecord.org_id == OrganizationRecord.id)
+                    .filter(
+                        OrganizationMemberRecord.user_id == user_id,
+                        OrganizationMemberRecord.is_active == True,
+                    )
+                    .all()
+                )
                 result = []
-                for m in memberships:
-                    org = session.query(OrganizationRecord).filter_by(id=m.org_id).first()
-                    if org:
-                        entry = org.to_dict()
-                        entry['member_role'] = m.role
-                        entry['membership_id'] = m.id
-                        result.append(entry)
+                for m, org in rows:
+                    entry = org.to_dict()
+                    entry['member_role'] = m.role
+                    entry['membership_id'] = m.id
+                    result.append(entry)
                 return result
         except Exception as e:
             logger.error(f"Error retrieving user organizations: {str(e)}")

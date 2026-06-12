@@ -18,6 +18,8 @@ def _set_test_env(tmp_path_factory):
     mp.setenv("FLASK_ENV", "testing")
     mp.setenv("FLASK_DEBUG", "False")
     mp.setenv("SOCKETIO_ASYNC_MODE", "threading")
+    mp.setenv("RATE_LIMIT_LOGIN_ATTEMPTS", "100")
+    mp.setenv("RATE_LIMIT_MAX_REQUESTS", "10000")
     return mp
 
 

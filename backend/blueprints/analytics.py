@@ -18,6 +18,7 @@ logger = logging.getLogger('packet_peeper')
 
 
 @bp.route('/analytics', methods=['GET'])
+@ext.cached_api(ttl_seconds=15)
 def api_analytics():
     try:
         time_range = request.args.get('range', '24h')
@@ -64,6 +65,7 @@ def api_analytics():
 
 
 @bp.route('/analytics/protocols', methods=['GET'])
+@ext.cached_api(ttl_seconds=30)
 def api_protocol_distribution():
     try:
         if ext.sniffer:
@@ -97,6 +99,7 @@ def api_protocol_distribution():
 
 
 @bp.route('/analytics/top-talkers', methods=['GET'])
+@ext.cached_api(ttl_seconds=30)
 def api_analytics_top_talkers():
     try:
         limit = request.args.get('limit', 10, type=int)
@@ -122,6 +125,7 @@ def api_analytics_top_talkers():
 
 
 @bp.route('/analytics/bandwidth', methods=['GET'])
+@ext.cached_api(ttl_seconds=30)
 def api_bandwidth_history():
     try:
         hours = request.args.get('hours', 24, type=int)

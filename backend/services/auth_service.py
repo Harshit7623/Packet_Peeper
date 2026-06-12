@@ -38,6 +38,15 @@ RBAC_ENDPOINT_RULES = {
     '/api/network/scan': {'roles': {'admin', 'operator'}},
     '/api/admin': {'roles': {'admin'}, 'prefix': True},
     '/api/organizations': {'roles': {'admin', 'operator'}, 'prefix': True, 'write_roles': {'admin'}},
+    '/api/reports/generate': {'roles': {'admin', 'operator'}},
+    '/api/reports': {'roles': {'admin', 'operator', 'viewer'}, 'prefix': True, 'write_roles': {'admin'}},
+}
+
+RBAC_SOCKET_RULES = {
+    'start_sniffing': {'roles': {'admin', 'operator'}},
+    'stop_sniffing': {'roles': {'admin', 'operator'}},
+    'clear_logs': {'roles': {'admin'}},
+    'scan_devices': {'roles': {'admin', 'operator'}},
 }
 
 

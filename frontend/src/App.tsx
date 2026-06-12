@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -10,22 +10,23 @@ import { useMonitorStore } from "@/store/monitorStore";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import NotFound from "@/pages/not-found";
-
-import Dashboard from "@/pages/dashboard";
-import PacketMonitor from "@/pages/packet-monitor";
-import Alerts from "@/pages/alerts";
-import NetworkMap from "@/pages/network";
-import TrafficAnalysis from "@/pages/traffic";
-import Analytics from "@/pages/analytics";
-import SystemStats from "@/pages/system";
-import Logs from "@/pages/logs";
-import Settings from "@/pages/settings";
 import Login from "@/pages/login";
 import Register from "@/pages/register";
-import Profile from "@/pages/profile";
-import ActionCenter from "@/pages/action-center";
-import MlAnomaly from "@/pages/ml-anomaly";
-import Admin from "@/pages/admin";
+
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+const PacketMonitor = lazy(() => import("@/pages/packet-monitor"));
+const Alerts = lazy(() => import("@/pages/alerts"));
+const NetworkMap = lazy(() => import("@/pages/network"));
+const TrafficAnalysis = lazy(() => import("@/pages/traffic"));
+const Analytics = lazy(() => import("@/pages/analytics"));
+const SystemStats = lazy(() => import("@/pages/system"));
+const Logs = lazy(() => import("@/pages/logs"));
+const Settings = lazy(() => import("@/pages/settings"));
+const Profile = lazy(() => import("@/pages/profile"));
+const ActionCenter = lazy(() => import("@/pages/action-center"));
+const MlAnomaly = lazy(() => import("@/pages/ml-anomaly"));
+const Admin = lazy(() => import("@/pages/admin"));
+const Reports = lazy(() => import("@/pages/reports"));
 
 function LoadingScreen() {
   return (
@@ -34,6 +35,17 @@ function LoadingScreen() {
         <div className="text-xs font-mono tracking-[0.3em] text-primary">VERIFYING ACCESS</div>
         <div className="text-2xl font-black text-foreground">Authenticating Session</div>
         <div className="text-sm text-muted-foreground">Connecting to your security console...</div>
+      </div>
+    </div>
+  );
+}
+
+function PageLoader() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-center space-y-3">
+        <div className="text-xs font-mono tracking-[0.3em] text-primary">LOADING</div>
+        <div className="text-lg font-semibold text-foreground">Loading Page...</div>
       </div>
     </div>
   );
@@ -60,20 +72,22 @@ function Router() {
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
-      <Route path="/profile" component={Profile} />
-      <Route path="/" component={Dashboard} />
-      <Route path="/action-center" component={ActionCenter} />
-      <Route path="/packets" component={PacketMonitor} />
-      <Route path="/alerts" component={Alerts} />
-      <Route path="/network" component={NetworkMap} />
-    <Route path="/traffic" component={TrafficAnalysis} />
-    <Route path="/ml" component={MlAnomaly} />
-    <Route path="/analytics" component={Analytics} />
-      <Route path="/system" component={SystemStats} />
-      <Route path="/logs" component={Logs} />
+      <Suspense fallback={<PageLoader />}>
+        <Route path="/profile" component={Profile} />
+        <Route path="/" component={Dashboard} />
+        <Route path="/action-center" component={ActionCenter} />
+        <Route path="/packets" component={PacketMonitor} />
+        <Route path="/alerts" component={Alerts} />
+        <Route path="/network" component={NetworkMap} />
+        <Route path="/traffic" component={TrafficAnalysis} />
+        <Route path="/ml" component={MlAnomaly} />
+        <Route path="/analytics" component={Analytics} />
+        <Route path="/system" component={SystemStats} />
+        <Route path="/logs" component={Logs} />
+        <Route path="/reports" component={Reports} />
         <Route path="/settings" component={Settings} />
         <Route path="/admin" component={Admin} />
-      {/* Fallback to 404 */}
+      </Suspense>
       <Route component={NotFound} />
     </Switch>
   );

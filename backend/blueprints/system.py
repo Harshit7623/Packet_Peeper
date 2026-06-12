@@ -1,17 +1,15 @@
 """
 System Blueprint
-Handles system info, health checks, settings, AI assistant, reports, clear_all, test-mode, and debug endpoints.
+Handles system info, health checks, settings, AI assistant, clear_all, test-mode, and debug endpoints.
 """
 
 import os
 import time
 import logging
-import datetime
 
-from flask import Blueprint, request, jsonify, send_file, g
+from flask import Blueprint, request, jsonify, g
 
 from config.config import ENABLE_AUTH, FEATURES, FLASK_ENV
-from services.report_generator import get_report_generator
 from services.ai_assistant import get_ai_assistant
 from services.packet_processor import get_packet_processor
 from services.database_services import AlertRecord, DeviceRecord, PacketRecord, UserSessionRecord
@@ -276,50 +274,6 @@ def api_ai_status():
             'message': 'Using built-in responses',
             'error': str(e),
         })
-
-
-@bp.route('/reports', methods=['POST'])
-def generate_report():
-    try:
-        data = request.get_json()
-        report_type = data.get('type', 'json')
-
-        packets = []
-        alerts_list = []
-        devices = []
-
-        if ext.db_service and FEATURES['persistent_storage']:
-            packets, _ = ext.db_service.get_packets(limit=10000)
-            alerts_list, _ = ext.db_service.get_alerts(limit=1000)
-            devices, _ = ext.db_service.get_devices()
-        elif ext.sniffer:
-            packets = list(ext.sniffer.captured_packets[-10000:]) if ext.sniffer.captured_packets else []
-            with ext.alerts_lock:
-                alerts_list = [ext._normalize_alert(a) for a in ext.alerts]
-            devices = ext._collect_device_snapshot()
-
-        generator = get_report_generator()
-
-        if report_type == 'pdf':
-            filepath = generator.generate_pdf_report(packets, alerts_list)
-            if filepath:
-                return send_file(filepath, as_attachment=True,
-                                 download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-        elif report_type == 'csv':
-            filepath = generator.generate_csv_report(packets, alerts_list)
-            if filepath:
-                return send_file(filepath, as_attachment=True,
-                                 download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-        elif report_type == 'json':
-            filepath = generator.generate_json_report(packets, alerts_list, devices)
-            if filepath:
-                return send_file(filepath, as_attachment=True,
-                                 download_name=f"report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-
-        return jsonify({'error': 'Report generation failed (maybe reportlab is missing for pdf)'}), 500
-    except Exception as e:
-        logger.error(f"Error generating report: {str(e)}")
-        return jsonify({'error': str(e)}), 500
 
 
 @bp.route('/clear_all', methods=['POST'])

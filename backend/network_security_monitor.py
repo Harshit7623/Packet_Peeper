@@ -268,7 +268,8 @@ class NetworkSecurityMonitor:
     def enable_test_mode(self):
         """Enable test mode with lower thresholds for easier attack detection during testing"""
         self.set_profile("test")
-        logger.info("[TEST] Detection profile set to test")
+        self.warmup_end = 0
+        logger.info("[TEST] Detection profile set to test, warmup disabled")
     
     def disable_test_mode(self):
         """Disable test mode and restore production thresholds"""

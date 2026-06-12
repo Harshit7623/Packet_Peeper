@@ -41,6 +41,7 @@ from config.config import (
     ANOMALY_CHECK_INTERVAL, ANOMALY_SCORE_THRESHOLD,
     ANOMALY_TRAINING_WINDOW_HOURS, ANOMALY_MIN_TRAINING_SAMPLES,
     ML_MODEL_DIR,
+    SCHEDULED_REPORT_INTERVAL,
 )
 
 # ============== LOGGING ==============
@@ -232,7 +233,7 @@ def after_request(response):
     return response
 
 # ============== REGISTER BLUEPRINTS ==============
-from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml, admin, organizations
+from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml, admin, organizations, reports
 
 blueprints = [
     auth.bp,
@@ -250,6 +251,7 @@ blueprints = [
     ml.bp,
     admin.bp,
     organizations.bp,
+    reports.bp,
 ]
 
 for bp in blueprints:
@@ -343,6 +345,82 @@ def ml_anomaly_loop():
             logger.error(f"Error in ML anomaly loop: {type(e).__name__}: {str(e)}")
             time.sleep(60)
 
+def scheduled_report_loop():
+    from services.report_generator import get_report_generator
+    while True:
+        try:
+            if ext.db_service and FEATURES['persistent_storage']:
+                schedules = ext.db_service.get_scheduled_reports(active_only=True)
+                now = datetime.utcnow()
+                for sched in schedules:
+                    freq = sched.get('frequency', 'daily')
+                    last_run_str = sched.get('last_run_at')
+                    last_run = None
+                    if last_run_str:
+                        try:
+                            last_run = datetime.fromisoformat(last_run_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                        except Exception:
+                            pass
+                    should_run = False
+                    if last_run is None:
+                        should_run = True
+                    elif freq == 'daily' and (now - last_run).total_seconds() >= 86400:
+                        should_run = True
+                    elif freq == 'weekly' and (now - last_run).total_seconds() >= 604800:
+                        should_run = True
+                    elif freq == 'monthly' and (now - last_run).total_seconds() >= 2592000:
+                        should_run = True
+
+                    if not should_run:
+                        continue
+
+                    report_type = sched.get('report_type', 'json')
+                    offset_days = sched.get('start_date_offset_days', 1)
+                    end_offset = sched.get('end_date_offset_days', 0)
+                    severity = sched.get('severity')
+
+                    start_dt = now - timedelta(days=offset_days)
+                    end_dt = now - timedelta(days=end_offset)
+                    start_date = start_dt.isoformat()
+                    end_date = end_dt.isoformat()
+
+                    filters = {'start_date': start_date, 'end_date': end_date}
+                    packets, _ = ext.db_service.get_packets(limit=10000, **filters)
+                    alerts_list, _ = ext.db_service.get_alerts(limit=1000, **filters)
+                    if severity and severity != 'all':
+                        alerts_list = [a for a in alerts_list if a.get('severity') == severity]
+                    devices, _ = ext.db_service.get_devices()
+
+                    generator = get_report_generator()
+                    filepath = None
+                    if report_type == 'pdf':
+                        filepath = generator.generate_pdf_report(packets, alerts_list)
+                    elif report_type == 'csv':
+                        filepath = generator.generate_csv_report(packets, alerts_list)
+                    elif report_type == 'json':
+                        filepath = generator.generate_json_report(packets, alerts_list, devices)
+
+                    if filepath:
+                        file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+                        ext.db_service.save_report({
+                            'type': report_type,
+                            'start_date': start_date,
+                            'end_date': end_date,
+                            'file_path': str(filepath),
+                            'total_packets': len(packets),
+                            'total_alerts': len(alerts_list),
+                            'file_size': file_size,
+                            'org_id': sched.get('org_id'),
+                        })
+                        ext.db_service.update_scheduled_report_last_run(sched['id'])
+                        logger.info(f"[Reports] Auto-generated {report_type} report for schedule '{sched.get('name')}'")
+                    else:
+                        logger.warning(f"[Reports] Failed to auto-generate report for schedule '{sched.get('name')}'")
+
+        except Exception as e:
+            logger.error(f"Error in scheduled report loop: {e}")
+        time.sleep(SCHEDULED_REPORT_INTERVAL)
+
 # ============== SPA ROUTING ==============
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -418,6 +496,14 @@ if __name__ == '__main__':
             name="MLAnomalyThread",
         )
         ml_thread.start()
+
+    if FEATURES['persistent_storage']:
+        scheduled_report_thread = threading.Thread(
+            target=scheduled_report_loop,
+            daemon=True,
+            name="ScheduledReportThread",
+        )
+        scheduled_report_thread.start()
 
     logger.info(f"[Server] Starting Flask server on {HOST}:{PORT}")
     try:

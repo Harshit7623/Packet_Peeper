@@ -391,29 +391,97 @@ class ApiService {
     return this.request<{ interfaces: string[] }>('/api/interfaces');
   }
 
-  // ==================== Reports ====================
+// ==================== Reports ====================
 
-  async generateReport(type: 'pdf' | 'csv' | 'json' = 'json') {
-    return this.requestBlob('/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type }),
-    });
+async listReports(params?: { limit?: number; offset?: number }) {
+const qs = new URLSearchParams();
+if (params?.limit) qs.set('limit', String(params.limit));
+if (params?.offset) qs.set('offset', String(params.offset));
+const query = qs.toString() ? `?${qs.toString()}` : '';
+return this.request<{ reports: any[]; total: number; limit: number; offset: number }>(`/api/reports/${query}`);
+}
+
+async getReport(id: number) {
+return this.request<{ report: any }>(`/api/reports/${id}`);
+}
+
+async deleteReport(id: number) {
+return this.request<{ message: string }>(`/api/reports/${id}`, { method: 'DELETE' });
+}
+
+async generateParameterizedReport(data: {
+type?: 'pdf' | 'csv' | 'json';
+start_date?: string;
+end_date?: string;
+packet_limit?: number;
+alert_limit?: number;
+severity?: string;
+}) {
+return this.request<{ message: string; file_path: string; report_type: string; total_packets: number; total_alerts: number; file_size: number }>('/api/reports/generate', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify(data),
+});
+}
+
+async downloadReportById(id: number) {
+return this.requestBlob(`/api/reports/${id}/download`);
+}
+
+async generateReport(type: 'pdf' | 'csv' | 'json' = 'json') {
+return this.requestBlob('/api/reports/generate', {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({ type }),
+});
+}
+
+async downloadReport(type: 'pdf' | 'csv' | 'json' = 'json') {
+const blob = await this.generateReport(type);
+const url = window.URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `network_report_${new Date().toISOString().split('T')[0]}.${type}`;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
   }
 
-  async downloadReport(type: 'pdf' | 'csv' | 'json' = 'json') {
-    const blob = await this.generateReport(type);
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `network_report_${new Date().toISOString().split('T')[0]}.${type}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
+  async listScheduledReports(activeOnly?: boolean) {
+  const qs = activeOnly ? '?active_only=true' : '';
+  return this.request<{ schedules: any[]; total: number }>(`/api/reports/schedules${qs}`);
   }
 
-  // ==================== Settings ====================
+  async createScheduledReport(data: {
+  name?: string;
+  report_type?: 'pdf' | 'csv' | 'json';
+  frequency?: 'daily' | 'weekly' | 'monthly';
+  start_date_offset_days?: number;
+  end_date_offset_days?: number;
+  severity?: string;
+  is_active?: boolean;
+  }) {
+  return this.request<{ message: string; id: number }>('/api/reports/schedules', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+  });
+  }
+
+  async updateScheduledReport(id: number, data: Record<string, any>) {
+  return this.request<{ message: string }>(`/api/reports/schedules/${id}`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+  });
+  }
+
+  async deleteScheduledReport(id: number) {
+  return this.request<{ message: string }>(`/api/reports/schedules/${id}`, { method: 'DELETE' });
+  }
+
+// ==================== Settings ====================
 
   async getSettings() {
     return this.request<any>('/api/settings');

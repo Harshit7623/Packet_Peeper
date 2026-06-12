@@ -1,5 +1,8 @@
-import pytest
+"""
+Security Monitor Tests
+"""
 from network_security_monitor import NetworkSecurityMonitor
+
 
 def test_port_scan_detection():
     monitor = NetworkSecurityMonitor()
@@ -21,7 +24,8 @@ def test_port_scan_detection():
     packet = {'src_ip': src_ip, 'dst_ip': dst_ip, 'dst_port': 3306, 'protocol': 'TCP', 'tcp_flags': 2, 'length': 60}
     alerts.extend(monitor.analyze_packet(packet))
     
-    assert any(a.get('type') == 'port_scan' for a in alerts)
+    assert any(a.get('alert_type') == 'port_scan' for a in alerts)
+
 
 def test_ddos_detection():
     monitor = NetworkSecurityMonitor()
@@ -36,7 +40,8 @@ def test_ddos_detection():
         packet = {'src_ip': src_ip, 'dst_ip': dst_ip, 'length': 64, 'protocol': 'TCP', 'dst_port': 80}
         alerts.extend(monitor.analyze_packet(packet))
         
-    assert any(a.get('type') in ['flood', 'ddos'] for a in alerts)
+    assert any(a.get('alert_type') in ['flood', 'ddos'] for a in alerts)
+
 
 def test_brute_force_detection():
     monitor = NetworkSecurityMonitor()
@@ -46,9 +51,9 @@ def test_brute_force_detection():
     dst_ip = "192.168.1.10"
     
     alerts = []
-    # Threshold in test mode is 5
+    # Threshold in test mode is 4
     for _ in range(6):
         packet = {'src_ip': src_ip, 'dst_ip': dst_ip, 'dst_port': 22, 'protocol': 'TCP', 'tcp_flags': 2, 'length': 60}
         alerts.extend(monitor.analyze_packet(packet))
         
-    assert any(a.get('type') == 'brute_force' for a in alerts)
+    assert any(a.get('alert_type') == 'brute_force' for a in alerts)

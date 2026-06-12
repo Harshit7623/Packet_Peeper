@@ -59,6 +59,7 @@ def _parse_time_range():
 
 
 @bp.route('/timeseries', methods=['GET'])
+@ext.cached_api(ttl_seconds=60)
 def api_history_timeseries():
     """GET /api/history/timeseries?range=24h&bucket=60
 
@@ -91,6 +92,7 @@ def api_history_timeseries():
 
 
 @bp.route('/summary', methods=['GET'])
+@ext.cached_api(ttl_seconds=60)
 def api_history_summary():
     """GET /api/history/summary?range=7d
 
@@ -115,6 +117,7 @@ def api_history_summary():
 
 
 @bp.route('/protocols', methods=['GET'])
+@ext.cached_api(ttl_seconds=60)
 def api_history_protocols():
     """GET /api/history/protocols?range=7d&bucket=60
 
@@ -146,6 +149,7 @@ def api_history_protocols():
 
 
 @bp.route('/top-talkers', methods=['GET'])
+@ext.cached_api(ttl_seconds=60)
 def api_history_top_talkers():
     """GET /api/history/top-talkers?range=7d&limit=10
 
@@ -212,6 +216,7 @@ def api_history_alerts():
 
 
 @bp.route('/bandwidth', methods=['GET'])
+@ext.cached_api(ttl_seconds=60)
 def api_history_bandwidth():
     """GET /api/history/bandwidth?range=7d
 
