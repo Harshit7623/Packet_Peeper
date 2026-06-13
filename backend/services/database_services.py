@@ -348,6 +348,54 @@ class ReportRecord(Base):
     }
 
 
+class CustomAlertRuleRecord(Base):
+    """User-defined custom alert rule"""
+    __tablename__ = "custom_alert_rules"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, default='')
+    enabled = Column(Boolean, default=True)
+    severity = Column(String(20), default='medium')
+    conditions = Column(Text, nullable=False)
+    action = Column(String(20), default='alert')
+    action_config = Column(Text, default='{}')
+    cooldown_seconds = Column(Integer, default=60)
+    trigger_count = Column(Integer, default=0)
+    last_triggered = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    org_id = Column(Integer, index=True, nullable=True)
+    created_by = Column(String(32), nullable=True)
+
+    def to_dict(self):
+        try:
+            conditions = json.loads(self.conditions) if self.conditions else {}
+        except json.JSONDecodeError:
+            conditions = {}
+        try:
+            action_config = json.loads(self.action_config) if self.action_config else {}
+        except json.JSONDecodeError:
+            action_config = {}
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'enabled': self.enabled,
+            'severity': self.severity,
+            'conditions': conditions,
+            'action': self.action,
+            'action_config': action_config,
+            'cooldown_seconds': self.cooldown_seconds,
+            'trigger_count': self.trigger_count,
+            'last_triggered': self.last_triggered.isoformat() if self.last_triggered else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'org_id': self.org_id,
+            'created_by': self.created_by,
+        }
+
+
 class ScheduledReportRecord(Base):
     """Scheduled report configuration for auto-generation"""
     __tablename__ = "scheduled_reports"
@@ -1949,7 +1997,107 @@ class DatabaseService:
             logger.error(f"Error cleaning up records: {str(e)}")
             return 0
 
-# ============== SINGLETON INSTANCE ==============
+    # ============== CUSTOM ALERT RULE OPERATIONS ==============
+
+    def get_custom_rules(self, org_id: Optional[int] = None, enabled_only: bool = False) -> List[Dict]:
+        if not self.SessionLocal:
+            return []
+        try:
+            with self.get_session() as session:
+                query = session.query(CustomAlertRuleRecord)
+                if org_id is not None:
+                    query = query.filter(CustomAlertRuleRecord.org_id == org_id)
+                if enabled_only:
+                    query = query.filter(CustomAlertRuleRecord.enabled == True)
+                query = query.order_by(CustomAlertRuleRecord.created_at.desc())
+                return [r.to_dict() for r in query.all()]
+        except Exception as e:
+            logger.error(f"Error getting custom rules: {e}")
+            return []
+
+    def get_custom_rule(self, rule_id: int) -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                rule = session.query(CustomAlertRuleRecord).filter(CustomAlertRuleRecord.id == rule_id).first()
+                return rule.to_dict() if rule else None
+        except Exception as e:
+            logger.error(f"Error getting custom rule {rule_id}: {e}")
+            return None
+
+    def create_custom_rule(self, data: Dict) -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                rule = CustomAlertRuleRecord(
+                    name=data.get('name', 'Untitled Rule'),
+                    description=data.get('description', ''),
+                    enabled=data.get('enabled', True),
+                    severity=data.get('severity', 'medium'),
+                    conditions=json.dumps(data.get('conditions', {})),
+                    action=data.get('action', 'alert'),
+                    action_config=json.dumps(data.get('action_config', {})),
+                    cooldown_seconds=data.get('cooldown_seconds', 60),
+                    org_id=data.get('org_id'),
+                    created_by=data.get('created_by'),
+                )
+                session.add(rule)
+                session.flush()
+                return rule.to_dict()
+        except Exception as e:
+            logger.error(f"Error creating custom rule: {e}")
+            return None
+
+    def update_custom_rule(self, rule_id: int, data: Dict) -> Optional[Dict]:
+        if not self.SessionLocal:
+            return None
+        try:
+            with self.get_session() as session:
+                rule = session.query(CustomAlertRuleRecord).filter(CustomAlertRuleRecord.id == rule_id).first()
+                if not rule:
+                    return None
+                for key, value in data.items():
+                    if key == 'conditions':
+                        rule.conditions = json.dumps(value)
+                    elif key == 'action_config':
+                        rule.action_config = json.dumps(value)
+                    elif key == 'id':
+                        continue
+                    elif hasattr(rule, key):
+                        setattr(rule, key, value)
+                rule.updated_at = datetime.utcnow()
+                session.flush()
+                return rule.to_dict()
+        except Exception as e:
+            logger.error(f"Error updating custom rule {rule_id}: {e}")
+            return None
+
+    def delete_custom_rule(self, rule_id: int) -> bool:
+        if not self.SessionLocal:
+            return False
+        try:
+            with self.get_session() as session:
+                deleted = session.query(CustomAlertRuleRecord).filter(CustomAlertRuleRecord.id == rule_id).delete()
+                return deleted > 0
+        except Exception as e:
+            logger.error(f"Error deleting custom rule {rule_id}: {e}")
+            return False
+
+    def increment_rule_trigger(self, rule_id: int) -> None:
+        if not self.SessionLocal:
+            return
+        try:
+            with self.get_session() as session:
+                rule = session.query(CustomAlertRuleRecord).filter(CustomAlertRuleRecord.id == rule_id).first()
+                if rule:
+                    rule.trigger_count = (rule.trigger_count or 0) + 1
+                    rule.last_triggered = datetime.utcnow()
+        except Exception as e:
+            logger.error(f"Error incrementing rule trigger {rule_id}: {e}")
+
+    # ============== SINGLETON INSTANCE ==============
 _db_service = None
 
 def get_database_service() -> DatabaseService:

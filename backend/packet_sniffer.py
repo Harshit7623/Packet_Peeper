@@ -381,6 +381,8 @@ class PacketSniffer:
         self.packet_loss_count = 0
         self.latency_samples = []
         self.jitter_samples = []
+        self._raw_packet_buffer = []
+        self._raw_packet_buffer_max = 200
         logger.info("PacketSniffer initialized with classification & metrics")
         self.discover_devices()
         # Detect the default gateway after interface discovery
@@ -895,6 +897,10 @@ class PacketSniffer:
             self.captured_packets.append(packet_info)
             if len(self.captured_packets) > MAX_PACKET_HISTORY:
                 self.captured_packets = self.captured_packets[-MAX_PACKET_HISTORY:]
+
+            self._raw_packet_buffer.append(packet)
+            if len(self._raw_packet_buffer) > self._raw_packet_buffer_max:
+                self._raw_packet_buffer = self._raw_packet_buffer[-self._raw_packet_buffer_max:]
 
             self.categories.setdefault(srv, []).append(packet_info)
             if len(self.categories[srv]) > MAX_CATEGORY_HISTORY:

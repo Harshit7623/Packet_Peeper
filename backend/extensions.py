@@ -503,6 +503,11 @@ def security_alert_callback(alert: dict):
             if socketio:
                 socketio.emit('new_alert', alert, namespace='/')
                 socketio.emit('security_alert', alert, namespace='/')
+        try:
+            from services.siem_service import siem_forwarder
+            siem_forwarder.enqueue_alert(alert)
+        except Exception:
+            pass
         logger.warning(f"[ALERT] [{alert.get('severity', 'medium').upper()}] {alert.get('title')}: {alert.get('description')}")
     except Exception as e:
         logger.error(f"Error in security alert callback: {e}")

@@ -27,6 +27,10 @@ const ActionCenter = lazy(() => import("@/pages/action-center"));
 const MlAnomaly = lazy(() => import("@/pages/ml-anomaly"));
 const Admin = lazy(() => import("@/pages/admin"));
 const Reports = lazy(() => import("@/pages/reports"));
+const CustomRules = lazy(() => import("@/pages/custom-rules"));
+const ThreatMap = lazy(() => import("@/pages/threat-map"));
+const PayloadInspector = lazy(() => import("@/pages/payload-inspector"));
+const SIEMIntegration = lazy(() => import("@/pages/siem"));
 
 function LoadingScreen() {
   return (
@@ -85,6 +89,10 @@ function Router() {
         <Route path="/system" component={SystemStats} />
         <Route path="/logs" component={Logs} />
         <Route path="/reports" component={Reports} />
+        <Route path="/custom-rules" component={CustomRules} />
+        <Route path="/threat-map" component={ThreatMap} />
+        <Route path="/payload" component={PayloadInspector} />
+        <Route path="/siem" component={SIEMIntegration} />
         <Route path="/settings" component={Settings} />
         <Route path="/admin" component={Admin} />
       </Suspense>

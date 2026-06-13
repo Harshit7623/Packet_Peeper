@@ -133,6 +133,7 @@ class NetworkSecurityMonitor:
         self.debug = DETECTION_DEBUG
         self.default_profile = self._normalize_profile(DETECTION_PROFILE)
         self.profile = self.default_profile
+        self.custom_rules_engine = None
         
         # ========== TRACKING DATA STRUCTURES ==========
         # Port scan detection
@@ -402,6 +403,10 @@ class NetworkSecurityMonitor:
                 if ddos_alert:
                     alerts.append(ddos_alert)
             
+            # ========== CUSTOM ALERT RULES ==========
+            custom_alerts = self._evaluate_custom_rules(packet)
+            alerts.extend(custom_alerts)
+
             # Process and broadcast alerts
             for alert in alerts:
                 if alert:
@@ -1158,6 +1163,31 @@ class NetworkSecurityMonitor:
         else:
             return f'FLAGS-{flags}'
     
+    def set_custom_rules_engine(self, engine):
+        self.custom_rules_engine = engine
+
+    def _evaluate_custom_rules(self, packet: Dict) -> List[Dict]:
+        if not self.custom_rules_engine:
+            return []
+        try:
+            triggered = self.custom_rules_engine.evaluate_packet(packet)
+            result = []
+            for rule in triggered:
+                alert = self._create_alert(
+                    title=f"Custom Rule: {rule.get('name', 'Unknown')}",
+                    severity=rule.get('severity', 'medium'),
+                    description=rule.get('description', 'Custom rule triggered'),
+                    source=packet.get('src_ip', 'unknown'),
+                    attack_type='custom_rule',
+                    evidence={'rule_id': rule.get('id'), 'rule_name': rule.get('name')},
+                )
+                if alert:
+                    result.append(alert)
+            return result
+        except Exception as e:
+            logger.error(f"Error evaluating custom rules: {e}")
+            return []
+
     def _create_alert(self, title: str, severity: str, description: str, source: str, 
                       attack_type: str, evidence: Dict = None) -> Optional[Dict]:
         """Create alert if not in cooldown and within limits"""

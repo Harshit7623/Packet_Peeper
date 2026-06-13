@@ -40,6 +40,11 @@ RBAC_ENDPOINT_RULES = {
     '/api/organizations': {'roles': {'admin', 'operator'}, 'prefix': True, 'write_roles': {'admin'}},
     '/api/reports/generate': {'roles': {'admin', 'operator'}},
     '/api/reports': {'roles': {'admin', 'operator', 'viewer'}, 'prefix': True, 'write_roles': {'admin'}},
+    '/api/custom-rules': {'roles': {'admin', 'operator'}, 'prefix': True, 'write_roles': {'admin'}},
+    '/api/geoip': {'roles': {'admin', 'operator', 'viewer'}, 'prefix': True},
+    '/api/payload': {'roles': {'admin', 'operator'}, 'prefix': True},
+    '/api/siem': {'roles': {'admin', 'operator'}, 'prefix': True, 'write_roles': {'admin'}},
+    '/api/dissectors': {'roles': {'admin', 'operator', 'viewer'}, 'prefix': True},
 }
 
 RBAC_SOCKET_RULES = {

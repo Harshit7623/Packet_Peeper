@@ -42,6 +42,7 @@ from config.config import (
     ANOMALY_TRAINING_WINDOW_HOURS, ANOMALY_MIN_TRAINING_SAMPLES,
     ML_MODEL_DIR,
     SCHEDULED_REPORT_INTERVAL,
+    USE_HTTPS, TLS_CERT_PATH, TLS_KEY_PATH,
 )
 
 # ============== LOGGING ==============
@@ -233,7 +234,7 @@ def after_request(response):
     return response
 
 # ============== REGISTER BLUEPRINTS ==============
-from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml, admin, organizations, reports
+from blueprints import auth, profile, alerts, packets, devices, sniffing, analytics, system, logs, detection, history, search, ml, admin, organizations, reports, custom_rules, geoip, payload, siem, dissector
 
 blueprints = [
     auth.bp,
@@ -252,6 +253,11 @@ blueprints = [
     admin.bp,
     organizations.bp,
     reports.bp,
+    custom_rules.custom_rules_bp,
+    geoip.geoip_bp,
+    payload.payload_bp,
+    siem.siem_bp,
+    dissector.dissector_bp,
 ]
 
 for bp in blueprints:
@@ -506,8 +512,21 @@ if __name__ == '__main__':
         scheduled_report_thread.start()
 
     logger.info(f"[Server] Starting Flask server on {HOST}:{PORT}")
+    ssl_context = None
+    if USE_HTTPS and TLS_CERT_PATH and TLS_KEY_PATH:
+        import ssl
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(TLS_CERT_PATH, TLS_KEY_PATH)
+        logger.info(f"[Server] TLS enabled — cert={TLS_CERT_PATH}")
+    else:
+        if USE_HTTPS:
+            logger.warning("[Server] USE_HTTPS=True but TLS_CERT_PATH or TLS_KEY_PATH not set — running without TLS")
     try:
-        socketio.run(app, host=HOST, port=PORT, debug=False, use_reloader=False, allow_unsafe_werkzeug=True)
+        socketio.run(
+            app, host=HOST, port=PORT, debug=False, use_reloader=False,
+            allow_unsafe_werkzeug=True,
+            ssl_context=ssl_context,
+        )
     except Exception as e:
         logger.error(f"[Server] Flask server crashed with error: {str(e)}")
         import traceback

@@ -1032,6 +1032,107 @@ document.body.removeChild(a);
       { method: 'PUT', body: JSON.stringify({ role }) }
     );
   }
+
+  // Custom Alert Rules
+  async getCustomRules() {
+    return this.request<{ rules: Record<string, unknown>[]; total: number }>('/api/custom-rules');
+  }
+
+  async getCustomRule(ruleId: number) {
+    return this.request<Record<string, unknown>>(`/api/custom-rules/${ruleId}`);
+  }
+
+  async createCustomRule(data: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>('/api/custom-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateCustomRule(ruleId: number, data: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(`/api/custom-rules/${ruleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCustomRule(ruleId: number) {
+    return this.request<{ message: string }>(`/api/custom-rules/${ruleId}`, { method: 'DELETE' });
+  }
+
+  async toggleCustomRule(ruleId: number) {
+    return this.request<Record<string, unknown>>(`/api/custom-rules/${ruleId}/toggle`, { method: 'POST' });
+  }
+
+  async testCustomRule(conditions: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>('/api/custom-rules/test', {
+      method: 'POST',
+      body: JSON.stringify({ conditions }),
+    });
+  }
+
+  async getCustomRuleFields() {
+    return this.request<{ fields: Record<string, unknown>[]; operators: Record<string, unknown>[] }>('/api/custom-rules/fields');
+  }
+
+  async lookupGeoip(ip: string) {
+    return this.request<Record<string, unknown>>(`/api/geoip/lookup/${encodeURIComponent(ip)}`);
+  }
+
+  async batchGeoipLookup(ips: string[]) {
+    return this.request<{ results: Record<string, Record<string, unknown>>; count: number }>('/api/geoip/batch', {
+      method: 'POST',
+      body: JSON.stringify({ ips }),
+    });
+  }
+
+  async getThreatMap() {
+    return this.request<{ threats: Record<string, unknown>[]; total: number }>('/api/geoip/threat-map');
+  }
+
+  async getGeoipStatus() {
+    return this.request<{ available: boolean }>('/api/geoip/status');
+  }
+
+  async getRecentPayloads(limit?: number) {
+    const params = limit ? `?limit=${limit}` : '';
+    return this.request<{ packets: Record<string, unknown>[]; total: number }>(`/api/payload/recent${params}`);
+  }
+
+  async inspectPayload(packetId: number, maxBytes?: number) {
+    const params = maxBytes ? `?max_bytes=${maxBytes}` : '';
+    return this.request<Record<string, unknown>>(`/api/payload/${packetId}${params}`);
+  }
+
+  async getSIEMIntegrations() {
+    return this.request<{ integrations: Record<string, unknown>[]; total: number }>('/api/siem/integrations');
+  }
+
+  async createSIEMIntegration(data: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>('/api/siem/integrations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateSIEMIntegration(intId: number, data: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(`/api/siem/integrations/${intId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteSIEMIntegration(intId: number) {
+    return this.request<{ message: string }>(`/api/siem/integrations/${intId}`, { method: 'DELETE' });
+  }
+
+  async toggleSIEMIntegration(intId: number) {
+    return this.request<Record<string, unknown>>(`/api/siem/integrations/${intId}/toggle`, { method: 'POST' });
+  }
+
+  async testSIEMIntegration(intId: number) {
+    return this.request<Record<string, unknown>>(`/api/siem/integrations/${intId}/test`, { method: 'POST' });
+  }
 }
 
 // Export singleton instance

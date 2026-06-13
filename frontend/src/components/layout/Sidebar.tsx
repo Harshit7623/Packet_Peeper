@@ -18,7 +18,11 @@ import {
   Sparkles,
   Brain,
   UserCog,
-  ClipboardList
+  ClipboardList,
+  Zap,
+  Globe,
+  FileSearch,
+  Radio
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -37,6 +41,10 @@ const sidebarItems = [
   { icon: Server, label: "System", sub: "Core Health", href: "/system" },
   { icon: FileText, label: "History", sub: "Event Stream", href: "/logs" },
   { icon: ClipboardList, label: "Reports", sub: "Generated", href: "/reports" },
+  { icon: Zap, label: "Rules", sub: "Custom Alerts", href: "/custom-rules" },
+  { icon: Globe, label: "Threat Map", sub: "GeoIP Intel", href: "/threat-map" },
+  { icon: FileSearch, label: "Payload", sub: "Deep Inspect", href: "/payload" },
+  { icon: Radio, label: "SIEM", sub: "Alert Export", href: "/siem" },
   { icon: UserCircle, label: "Profile", sub: "Operator ID", href: "/profile" },
   { icon: Settings, label: "Settings", sub: "Config", href: "/settings" },
 ];

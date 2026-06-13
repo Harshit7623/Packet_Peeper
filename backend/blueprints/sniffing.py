@@ -39,6 +39,15 @@ def start_sniffing(interface: str):
     try:
         logger.info(f"[Capture] Starting packet capture on interface: {interface}")
         ext.sniffer = PacketSniffer()
+        if ext.db_service and FEATURES.get('persistent_storage', False):
+            try:
+                from services.custom_rules_service import CustomRulesEngine
+                engine = CustomRulesEngine(db_service=ext.db_service)
+                engine.reload_rules(force=True)
+                ext.sniffer.security_monitor.set_custom_rules_engine(engine)
+                logger.info("[CustomRules] Engine attached to security monitor")
+            except Exception as e:
+                logger.warning(f"[CustomRules] Failed to attach engine: {e}")
         if ASYNC_PROCESSING:
             processor = get_packet_processor()
             processor.register_callback(ext.packet_callback)
