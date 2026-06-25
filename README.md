@@ -496,18 +496,18 @@ pip install -r backend/requirements.txt
 
 - [x] Database persistence (SQLite/PostgreSQL integration)
 - [x] User authentication and authorization
-- [ ] Multi-user support
-- [ ] Advanced filtering and search
-- [ ] Machine learning-based anomaly detection
+- [x] Multi-user support
+- [x] Advanced filtering and search
+- [x] Machine learning-based anomaly detection
 - [ ] Mobile app support
 - [ ] Cloud deployment support
-- [ ] Advanced encryption for WebSocket
-- [ ] Historical data analysis
-- [ ] Custom alert rules builder
-- [ ] Integration with SIEM systems
-- [ ] Packet payload inspection (with encryption bypass for testing)
-- [ ] Protocol dissection plugins
-- [ ] GeoIP-based threat mapping
+- [x] Advanced encryption for WebSocket
+- [x] Historical data analysis
+- [x] Custom alert rules builder
+- [x] Integration with SIEM systems
+- [x] Packet payload inspection (with encryption bypass for testing)
+- [x] Protocol dissection plugins
+- [x] GeoIP-based threat mapping
 
 ## Contributing
 

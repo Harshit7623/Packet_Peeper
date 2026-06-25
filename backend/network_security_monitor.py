@@ -275,7 +275,13 @@ class NetworkSecurityMonitor:
             'http': 0, 'https': 0, 'arp': 0, 'other': 0,
             'malicious': 0, 'suspicious': 0
         }
-        logger.info("[Security] NetworkSecurityMonitor counters reset")
+        self.warmup_end = time.time() + DETECTION_WARMUP_SECONDS
+        self.outbound_transfers = defaultdict(lambda: {'bytes': 0, 'timestamps': [], 'first_seen': 0})
+        self.injection_attempts = defaultdict(lambda: {'count': 0, 'timestamps': []})
+        self.arp_requests = defaultdict(list)
+        self.dns_queries = defaultdict(list)
+        self.dns_query_lengths = defaultdict(list)
+        logger.info("[Security] NetworkSecurityMonitor counters reset, warmup restarted")
     
     def enable_test_mode(self):
         """Enable test mode with lower thresholds for easier attack detection during testing"""

@@ -8,10 +8,10 @@
     "email": "contact@packetpeeper.app"
   },
   "license": "MIT",
-  "homepage": "https://github.com/yourusername/packet-peeper",
+  "homepage": "https://github.com/Harshit7623/Packet_Peeper",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/packet-peeper.git"
+    "url": "https://github.com/Harshit7623/Packet_Peeper.git"
   },
   "scripts": {
     "start": "electron .",
@@ -108,9 +108,14 @@
       "category": "public.app-category.utilities"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": "AppImage",
       "icon": "assets/icon.png",
-      "category": "Network"
+      "category": "Network",
+      "mimeTypes": ["x-scheme-handler/packet-peeper"]
+    },
+    "protocols": {
+      "name": "Packet Peeper",
+      "schemes": ["packet-peeper"]
     },
     "publish": {
       "provider": "github",

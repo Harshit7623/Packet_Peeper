@@ -38,6 +38,18 @@ def _check_capture_permissions() -> tuple[bool, str | None]:
 def start_sniffing(interface: str):
     try:
         logger.info(f"[Capture] Starting packet capture on interface: {interface}")
+
+        with ext.alerts_lock:
+            ext.alerts.clear()
+            if ext.db_service and FEATURES.get('persistent_storage', False):
+                try:
+                    ext.db_service.clear_alerts()
+                except Exception as e:
+                    logger.warning(f"[Capture] Could not clear stale alerts from DB: {e}")
+            if ext.socketio:
+                ext.socketio.emit('alerts_sync', [], namespace='/')
+        ext.add_log('info', 'System', 'Stale alerts from previous session cleared')
+
         ext.sniffer = PacketSniffer()
         if ext.db_service and FEATURES.get('persistent_storage', False):
             try:

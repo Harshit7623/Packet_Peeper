@@ -5,34 +5,34 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
-  // App information
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
-  
-  // Settings
+
   getSettings: () => ipcRenderer.invoke('get-settings'),
   updateSettings: (settings) => ipcRenderer.invoke('update-settings', settings),
-  
-  // Backend control
+
   restartBackend: (interface_) => ipcRenderer.invoke('restart-backend', interface_),
-  
-  // Notifications
+
   showNotification: (title, body) => ipcRenderer.invoke('show-notification', { title, body }),
-  
-  // Listen for navigation from main process
+
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
+
+  sendSecurityAlert: (alert) => ipcRenderer.send('security-alert', alert),
+
   onNavigate: (callback) => ipcRenderer.on('navigate', (event, path) => callback(path)),
+  onDeepNavigate: (callback) => ipcRenderer.on('deep-navigate', (event, data) => callback(data)),
   onExportReport: (callback) => ipcRenderer.on('export-report', (event, format) => callback(format)),
   onStartMonitoring: (callback) => ipcRenderer.on('start-monitoring', () => callback()),
   onStopMonitoring: (callback) => ipcRenderer.on('stop-monitoring', () => callback()),
   onScanNetwork: (callback) => ipcRenderer.on('scan-network', () => callback()),
-  
-  // Remove listeners
+  onClearAlerts: (callback) => ipcRenderer.on('clear-alerts', () => callback()),
+
   removeNavigateListener: () => ipcRenderer.removeAllListeners('navigate'),
+  removeDeepNavigateListener: () => ipcRenderer.removeAllListeners('deep-navigate'),
 });
 
-// Expose some Node APIs safely
 contextBridge.exposeInMainWorld('nodeAPI', {
   platform: process.platform,
   isDev: process.env.NODE_ENV === 'development',

@@ -99,14 +99,19 @@ export default function Alerts() {
     setDismissingId(alertId);
     try {
       await apiService.dismissAlert(alertId);
-      setTimeout(() => {
-        setAlerts(alerts.filter(a => a.id !== alertId));
+    } catch (err: any) {
+      if (err?.status === 401) {
         setDismissingId(null);
-      }, 300);
-    } catch (err) {
+        return;
+      }
       console.error('Failed to dismiss alert:', err);
       setDismissingId(null);
+      return;
     }
+    setTimeout(() => {
+      setAlerts(alerts.filter(a => a.id !== alertId));
+      setDismissingId(null);
+    }, 300);
   };
 
   const handleClearAll = async () => {
@@ -118,14 +123,19 @@ export default function Alerts() {
     setIsClearing(true);
     try {
       await apiService.clearAlerts();
-      clearAlerts();
-      setAlerts([]);
-    } catch (err) {
-      console.error('Failed to clear alerts:', err);
-      alert('Failed to clear alerts. Please try again.');
-    } finally {
+    } catch (err: any) {
+      if (err?.status === 401) {
+        alert('Session expired. Please log in again.');
+      } else {
+        console.error('Failed to clear alerts:', err);
+        alert('Failed to clear alerts. Please try again.');
+      }
       setIsClearing(false);
+      return;
     }
+    clearAlerts();
+    setAlerts([]);
+    setIsClearing(false);
   };
 
   const clearFilters = () => {

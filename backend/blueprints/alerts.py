@@ -83,6 +83,9 @@ def api_dismiss_alert(alert_id):
             ext.alerts = [a for a in ext.alerts if a.get('id') != alert_id]
             if ext.db_service:
                 ext.db_service.dismiss_alert(alert_id)
+        if ext.socketio:
+            with ext.alerts_lock:
+                ext.socketio.emit('alerts_sync', list(ext.alerts), namespace='/')
         return jsonify({'message': f'Alert {alert_id} dismissed'})
     except Exception as e:
         logger.error(f"Error dismissing alert: {str(e)}")
@@ -91,17 +94,23 @@ def api_dismiss_alert(alert_id):
 
 @bp.route('/alerts/clear', methods=['POST'])
 def api_clear_alerts():
-    try:
-        with ext.alerts_lock:
-            ext.alerts.clear()
-            if ext.db_service and FEATURES['persistent_storage']:
+    errors = []
+    with ext.alerts_lock:
+        ext.alerts.clear()
+        if ext.db_service and FEATURES['persistent_storage']:
+            try:
                 ext.db_service.clear_alerts()
-            if ext.sniffer and hasattr(ext.sniffer, 'security_monitor') and ext.sniffer.security_monitor:
+            except Exception as e:
+                errors.append(f"DB clear failed: {str(e)}")
+        if ext.sniffer and hasattr(ext.sniffer, 'security_monitor') and ext.sniffer.security_monitor:
+            try:
                 ext.sniffer.security_monitor.reset_counters()
-            ext.add_log('info', 'API', 'All alerts cleared and security counters reset')
-            if ext.socketio:
-                ext.socketio.emit('alerts_sync', [], namespace='/')
-        return jsonify({'message': 'All alerts cleared'})
-    except Exception as e:
-        logger.error(f"Error clearing alerts: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+            except Exception as e:
+                errors.append(f"Counter reset failed: {str(e)}")
+    ext.add_log('info', 'API', 'All alerts cleared and security counters reset')
+    if ext.socketio:
+        ext.socketio.emit('alerts_sync', [], namespace='/')
+    if errors:
+        logger.warning(f"Partial errors during alert clear: {errors}")
+        return jsonify({'message': 'Alerts cleared with warnings', 'warnings': errors})
+    return jsonify({'message': 'All alerts cleared'})
