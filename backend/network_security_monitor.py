@@ -23,79 +23,88 @@ logger = logging.getLogger(__name__)
 
 PROFILE_THRESHOLDS = {
     "strict": {
+        "port_scan_count": 25,
+        "port_scan_window": 120,
+        "stealth_scan_count": 12,
+        "syn_flood_rate": 200,
+        "udp_flood_rate": 300,
+        "icmp_flood_rate": 100,
+        "flood_window": 15,
+        "ddos_sources": 30,
+        "ddos_window": 30,
+        "dns_query_length": 120,
+        "dns_subdomain_count": 10,
+        "dns_query_rate": 120,
+        "brute_force_attempts": 20,
+        "brute_force_window": 300,
+        "beacon_regularity": 0.08,
+        "beacon_min_callbacks": 12,
+        "session_injection_count": 10,
+        "session_injection_window": 90,
+        "exfil_size_bytes": 5 * 1024 * 1024,
+        "exfil_window": 600,
+        "icmp_covert_min_bytes": 512,
+        "arp_flood_threshold": 50,
+        "alert_cooldown": 300,
+        "max_alerts_per_type": 2,
+        "max_total_alerts": 15,
+        "min_packets_before_detect": 500,
+    },
+    "balanced": {
         "port_scan_count": 15,
         "port_scan_window": 90,
         "stealth_scan_count": 8,
         "syn_flood_rate": 100,
         "udp_flood_rate": 150,
         "icmp_flood_rate": 60,
-        "flood_window": 5,
+        "flood_window": 10,
         "ddos_sources": 20,
         "ddos_window": 20,
-        "dns_query_length": 80,
+        "dns_query_length": 90,
         "dns_subdomain_count": 8,
-        "dns_query_rate": 80,
+        "dns_query_rate": 60,
         "brute_force_attempts": 12,
         "brute_force_window": 180,
-        "beacon_regularity": 0.1,
+        "beacon_regularity": 0.12,
         "beacon_min_callbacks": 8,
         "session_injection_count": 6,
         "session_injection_window": 60,
         "exfil_size_bytes": 2 * 1024 * 1024,
         "exfil_window": 300,
-        "alert_cooldown": 120,
+        "icmp_covert_min_bytes": 256,
+        "arp_flood_threshold": 40,
+        "alert_cooldown": 180,
         "max_alerts_per_type": 3,
         "max_total_alerts": 30,
+        "min_packets_before_detect": 200,
     },
-    "balanced": {
+    "sensitive": {
         "port_scan_count": 10,
         "port_scan_window": 60,
-        "stealth_scan_count": 6,
+        "stealth_scan_count": 5,
         "syn_flood_rate": 50,
         "udp_flood_rate": 80,
         "icmp_flood_rate": 30,
-        "flood_window": 5,
+        "flood_window": 8,
         "ddos_sources": 15,
         "ddos_window": 15,
-        "dns_query_length": 70,
+        "dns_query_length": 75,
         "dns_subdomain_count": 7,
-        "dns_query_rate": 40,
-        "brute_force_attempts": 7,
+        "dns_query_rate": 45,
+        "brute_force_attempts": 8,
         "brute_force_window": 120,
-        "beacon_regularity": 0.2,
+        "beacon_regularity": 0.15,
         "beacon_min_callbacks": 6,
         "session_injection_count": 4,
-        "session_injection_window": 30,
+        "session_injection_window": 45,
         "exfil_size_bytes": 1024 * 1024,
-        "exfil_window": 120,
-        "alert_cooldown": 60,
-        "max_alerts_per_type": 4,
+        "exfil_window": 180,
+        "icmp_covert_min_bytes": 128,
+        "arp_flood_threshold": 30,
+        "alert_cooldown": 120,
+        "max_alerts_per_type": 5,
         "max_total_alerts": 50,
-    },
-    "sensitive": {
-        "port_scan_count": 6,
-        "port_scan_window": 30,
-        "stealth_scan_count": 3,
-        "syn_flood_rate": 20,
-        "udp_flood_rate": 40,
-        "icmp_flood_rate": 15,
-        "flood_window": 5,
-        "ddos_sources": 8,
-        "ddos_window": 10,
-        "dns_query_length": 60,
-        "dns_subdomain_count": 6,
-        "dns_query_rate": 30,
-        "brute_force_attempts": 5,
-        "brute_force_window": 60,
-        "beacon_regularity": 0.15,
-        "beacon_min_callbacks": 5,
-        "session_injection_count": 3,
-        "session_injection_window": 30,
-        "exfil_size_bytes": 500 * 1024,
-        "exfil_window": 60,
-        "alert_cooldown": 30,
-        "max_alerts_per_type": 6,
-        "max_total_alerts": 75,
+        "min_packets_before_detect": 100,
     },
     "test": {
         "port_scan_count": 5,
@@ -118,9 +127,12 @@ PROFILE_THRESHOLDS = {
         "session_injection_window": 20,
         "exfil_size_bytes": 200 * 1024,
         "exfil_window": 60,
+        "icmp_covert_min_bytes": 64,
+        "arp_flood_threshold": 20,
         "alert_cooldown": 10,
         "max_alerts_per_type": 10,
         "max_total_alerts": 100,
+        "min_packets_before_detect": 0,
     },
 }
 
@@ -254,11 +266,10 @@ class NetworkSecurityMonitor:
         """Reset all alert counters and history - call when clearing alerts"""
         self.alert_history = {}
         self.alert_counts = defaultdict(int)
-        self.connection_tracker = {}
-        self.port_scan_tracker = {}
-        self.syn_tracker = {}
-        self.login_attempts = {}
-        self.beacon_tracker = {}
+        # Restore correct defaultdict types (not plain dicts)
+        self.port_scan_tracker = defaultdict(lambda: {'ports': set(), 'timestamps': [], 'flags': defaultdict(int)})
+        self.failed_logins = defaultdict(lambda: {'count': 0, 'timestamps': []})
+        self.beacon_tracker = defaultdict(list)
         self.packet_stats = {
             'total': 0, 'tcp': 0, 'udp': 0, 'icmp': 0, 'dns': 0, 
             'http': 0, 'https': 0, 'arp': 0, 'other': 0,
@@ -360,7 +371,7 @@ class NetworkSecurityMonitor:
             
             # ========== BRUTE FORCE DETECTION ==========
             if dst_port in [22, 23, 3389, 21, 25, 110, 143, 445, 3306, 5432]:
-                bf_alert = self._detect_brute_force(src_ip, dst_ip, dst_port, timestamp)
+                bf_alert = self._detect_brute_force(src_ip, src_port, dst_ip, dst_port, tcp_flags, timestamp)
                 if bf_alert:
                     alerts.append(bf_alert)
                     specific_attack_found = True
@@ -373,7 +384,7 @@ class NetworkSecurityMonitor:
                     specific_attack_found = True
             
             # ========== COVERT CHANNEL / BEACON DETECTION ==========
-            if protocol == 'ICMP' or (protocol == 'TCP' and dst_port in [80, 443]):
+            if protocol == 'ICMP':
                 covert_alert = self._detect_covert_channel(src_ip, dst_ip, protocol, payload, timestamp)
                 if covert_alert:
                     alerts.append(covert_alert)
@@ -394,7 +405,7 @@ class NetworkSecurityMonitor:
             # ========== FLOOD/DOS DETECTION (only if no specific attack found) ==========
             # This prevents generic flood alerts from overlapping with specific attacks
             if not specific_attack_found:
-                flood_alert = self._detect_flood(src_ip, dst_ip, protocol, payload_size, timestamp)
+                flood_alert = self._detect_flood(src_ip, dst_ip, protocol, payload_size, timestamp, tcp_flags)
                 if flood_alert:
                     alerts.append(flood_alert)
                 
@@ -467,7 +478,16 @@ class NetworkSecurityMonitor:
             severity = 'high'
             
         # ACK Scan (just ACK = 16) - firewall mapping
-        elif tcp_flags == 16 and tracker['flags']['ACK'] >= self.thresholds['stealth_scan_count'] and port_count >= 5:
+        # Only flag if source is external (not local RFC1918) and hit many distinct ports
+        elif tcp_flags == 16 and tracker['flags']['ACK'] >= self.thresholds['stealth_scan_count'] and port_count >= 15:
+            # Skip if source is a private/local IP — normal browser traffic generates ACKs
+            try:
+                import ipaddress as _ipa
+                src_obj = _ipa.ip_address(src_ip)
+                if src_obj.is_private:
+                    return None  # Local IPs are never ACK scanners
+            except Exception:
+                pass
             scan_type = 'ACK Scan (Firewall Probe)'
             severity = 'medium'
         
@@ -497,28 +517,38 @@ class NetworkSecurityMonitor:
         
         return None
     
-    def _detect_flood(self, src_ip: str, dst_ip: str, protocol: str, packet_size: int, timestamp: float) -> Optional[Dict]:
+    def _detect_flood(self, src_ip: str, dst_ip: str, protocol: str, packet_size: int, timestamp: float, tcp_flags: int = 0) -> Optional[Dict]:
         """Detect flood-based DoS attacks"""
-        
+
+        # Never flag local/private IPs as flood sources (normal LAN→internet traffic)
+        try:
+            import ipaddress as _ipa
+            if _ipa.ip_address(src_ip).is_private:
+                return None
+        except Exception:
+            pass
+
         tracker = self.packet_rate[src_ip]
         window = self.thresholds['flood_window']
-        
+
         # Clean old entries
         tracker['timestamps'] = [t for t in tracker['timestamps'] if timestamp - t < window]
         tracker['timestamps'].append(timestamp)
         tracker['bytes'] += packet_size
-        
+
         rate = len(tracker['timestamps']) / window if window > 0 else 0  # packets per second
-        
+
         # Debug output for high rates
         if rate > 10:
             self._debug_log(f"[Security] Flood rate {src_ip} -> {dst_ip}: {rate:.1f} pps ({protocol})")
-        
+
         flood_type = None
         severity = 'critical'
-        
-        if protocol == 'TCP' and len(tracker['timestamps']) >= self.thresholds['syn_flood_rate']:
-            flood_type = 'SYN Flood'
+
+        if protocol == 'TCP':
+            # Only count pure SYN packets (flags==2) for SYN flood — not all TCP traffic
+            if tcp_flags == 2 and len(tracker['timestamps']) >= self.thresholds['syn_flood_rate']:
+                flood_type = 'SYN Flood'
         elif protocol == 'UDP' and len(tracker['timestamps']) >= self.thresholds['udp_flood_rate']:
             flood_type = 'UDP Flood'
         elif protocol == 'ICMP' and len(tracker['timestamps']) >= self.thresholds['icmp_flood_rate']:
@@ -616,25 +646,23 @@ class NetworkSecurityMonitor:
             evidence['subdomain_count'] = subdomain_count
         
         # Check for encoded data patterns
-        if re.search(r'[a-zA-Z0-9+/]{20,}', payload_str):
-            suspicious_score += 2
+        if re.search(r'[a-zA-Z0-9+/=]{40,}', payload_str):
+            suspicious_score += 1
             evidence['base64_pattern'] = True
         
-        # Check for hex-encoded data
-        if re.search(r'[0-9a-fA-F]{32,}', payload_str):
-            suspicious_score += 2
+        if re.search(r'[0-9a-fA-F]{48,}', payload_str):
+            suspicious_score += 1
             evidence['hex_pattern'] = True
         
-        # Track query rate
         self.dns_queries[src_ip].append(timestamp)
         recent_queries = [t for t in self.dns_queries[src_ip] if timestamp - t < 60]
         self.dns_queries[src_ip] = recent_queries
         
         if len(recent_queries) > self.thresholds['dns_query_rate']:
-            suspicious_score += 1
+            suspicious_score += 2
             evidence['high_query_rate'] = len(recent_queries)
         
-        if suspicious_score >= 3:
+        if suspicious_score >= 5:
             logger.warning(f"[ALERT] DNS tunneling detected from {src_ip}")
             
             return self._create_alert(
@@ -664,8 +692,9 @@ class NetworkSecurityMonitor:
             recent = [t for t in self.arp_requests[arp_src_ip] if time.time() - t < 60]
             self.arp_requests[arp_src_ip] = recent
             
-            # Detect ARP request flood
-            if len(recent) > 30:  # Lowered threshold
+            arp_flood_threshold = self.thresholds.get('arp_flood_threshold', 40)
+            
+            if len(recent) > arp_flood_threshold:
                 return self._create_alert(
                     title='ARP Request Flood',
                     severity='medium',
@@ -699,14 +728,17 @@ class NetworkSecurityMonitor:
         
         return None
     
-    def _detect_brute_force(self, src_ip: str, dst_ip: str, dst_port: int, timestamp: float) -> Optional[Dict]:
-        """Detect brute force login attempts"""
+    def _detect_brute_force(self, src_ip: str, src_port: int, dst_ip: str, dst_port: int, 
+                            tcp_flags: int, timestamp: float) -> Optional[Dict]:
+        """Detect brute force login attempts — only counts SYN packets (new connections)"""
+        
+        if tcp_flags != 2:
+            return None
         
         key = f"{src_ip}->{dst_ip}:{dst_port}"
         tracker = self.failed_logins[key]
         window = self.thresholds['brute_force_window']
         
-        # Clean old entries
         tracker['timestamps'] = [t for t in tracker['timestamps'] if timestamp - t < window]
         tracker['timestamps'].append(timestamp)
         tracker['count'] = len(tracker['timestamps'])
@@ -905,7 +937,7 @@ class NetworkSecurityMonitor:
                     
                     # Check for regular beaconing (low variance)
                     regularity = std_dev / mean_interval if mean_interval > 0 else 1
-                    if regularity < self.thresholds['beacon_regularity'] and mean_interval > 60:
+                    if regularity < self.thresholds['beacon_regularity'] and mean_interval > 300:
                         logger.warning(f"[ALERT] C2 beacon detected: {src_ip} -> {dst_ip}")
                         self.beacon_tracker[key] = []  # Reset
                         
@@ -926,9 +958,9 @@ class NetworkSecurityMonitor:
         # Check ICMP payload for covert data
         if protocol == 'ICMP' and payload:
             payload_str = str(payload)
+            covert_min = self.thresholds.get('icmp_covert_min_bytes', 256)
             
-            # Check for unusual ICMP payload
-            if len(payload_str) > 64:  # Lowered threshold
+            if len(payload_str) > covert_min:  # Lowered threshold
                 logger.warning(f"[ALERT] ICMP covert channel suspected from {src_ip}")
                 return self._create_alert(
                     title='ICMP Covert Channel Suspected',
@@ -1034,7 +1066,7 @@ class NetworkSecurityMonitor:
             is_suspicious = any(pattern in payload_bytes.lower() if isinstance(payload_bytes, bytes) else pattern.decode() in payload_bytes.lower() 
                               for pattern in suspicious_patterns)
             
-            if is_suspicious or len(tracker['timestamps']) > 3:
+            if is_suspicious and len(tracker['timestamps']) > 3:
                 tracker['count'] += 1
                 tracker['timestamps'].append(timestamp)
                 
@@ -1060,9 +1092,9 @@ class NetworkSecurityMonitor:
     
     def _detect_data_exfiltration(self, src_ip: str, dst_ip: str, payload_size: int, 
                                    timestamp: float) -> Optional[Dict]:
-        """Detect potential data exfiltration - large outbound transfers"""
+        """Detect potential data exfiltration - large sustained outbound transfers"""
         
-        if payload_size < 100:  # Skip small packets
+        if payload_size < 500:
             return None
         
         # Track outbound transfers (assume local IPs are internal)
@@ -1194,8 +1226,13 @@ class NetworkSecurityMonitor:
         
         current_time = time.time()
         
+        # ========== MINIMUM PACKET COUNT CHECK ==========
+        min_packets = self.thresholds.get('min_packets_before_detect', 0)
+        if self.packet_stats['total'] < min_packets:
+            return None
+        
         # ========== RATE LIMITING ==========
-        # 1. Check per-type limit (max 3 alerts per attack type)
+        # 1. Check per-type limit
         if self.alert_counts.get(attack_type, 0) >= self.thresholds.get('max_alerts_per_type', 3):
             return None
         
@@ -1204,9 +1241,8 @@ class NetworkSecurityMonitor:
         if total_alerts >= self.thresholds.get('max_total_alerts', 20):
             return None
         
-        # 3. Check cooldown - now uses attack_type instead of title-source
-        # This prevents the same TYPE of attack from spamming, regardless of source
-        alert_key = attack_type  # Simplified to attack type only
+        # 3. Check cooldown — per source+type to allow same type from different sources
+        alert_key = f"{source}:{attack_type}"
         
         if alert_key in self.alert_history:
             last_time = self.alert_history[alert_key]
@@ -1306,5 +1342,4 @@ class NetworkSecurityMonitor:
         self.beacon_tracker.clear()
         self.failed_logins.clear()
         self.alert_history.clear()
-        logger.info("[Clear] All tracking data cleared")
         logger.info("[Clear] All tracking data cleared")

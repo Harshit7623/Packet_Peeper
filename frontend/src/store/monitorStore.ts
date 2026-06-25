@@ -95,6 +95,7 @@ interface MonitorState {
 
   // Packet methods
   addPacket: (packet: Packet) => void;
+  addPackets: (packets: Packet[]) => void;
   setPackets: (packets: Packet[]) => void;
   clearPackets: () => void;
   getPacketsCount: () => number;
@@ -160,6 +161,16 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
     set((state) => {
       const maxPackets = 1000; // Limit in-memory packets
       const newPackets = [packet, ...state.packets].slice(0, maxPackets);
+      return { packets: newPackets };
+    }),
+
+  addPackets: (newPacketsArray: Packet[]) =>
+    set((state) => {
+      const maxPackets = 1000;
+      // Prepend the new batch. Typically, the batch is older-to-newer, so we might want to reverse it 
+      // if we want the absolute newest at index 0, but for now we just spread it.
+      const reversedBatch = [...newPacketsArray].reverse();
+      const newPackets = [...reversedBatch, ...state.packets].slice(0, maxPackets);
       return { packets: newPackets };
     }),
 

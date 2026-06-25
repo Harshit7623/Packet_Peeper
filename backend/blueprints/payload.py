@@ -112,13 +112,26 @@ def inspect_packet(packet_id):
 
     sniffer = ext.sniffer
     raw_packets = getattr(sniffer, '_raw_packet_buffer', [])
+    captured = sniffer.captured_packets
 
-    if packet_id < 0 or packet_id >= len(raw_packets):
-        if ext.db_service and FEATURES.get('persistent_storage'):
-            return jsonify({'error': 'Payload inspection requires live capture data (not DB records)'}), 404
+    total_captured = len(captured)
+    total_raw = len(raw_packets)
+
+    if packet_id < 0 or packet_id >= total_captured:
         return jsonify({'error': 'Packet not found'}), 404
 
-    raw_packet = raw_packets[packet_id]
+    # The raw buffer is a ring buffer holding the last N packets.
+    # Calculate the offset: if captured_packets has 5000 entries and raw has 500,
+    # then raw[0] corresponds to captured[4500].
+    raw_offset = max(0, total_captured - total_raw)
+    raw_index = packet_id - raw_offset
+
+    if raw_index < 0 or raw_index >= total_raw:
+        if ext.db_service and FEATURES.get('persistent_storage'):
+            return jsonify({'error': 'Payload data no longer in live buffer (packet too old). Only recent packets have raw payload available.'}), 404
+        return jsonify({'error': 'Packet raw data no longer available (buffer overflow)'}), 404
+
+    raw_packet = raw_packets[raw_index]
     max_bytes = request.args.get('max_bytes', _MAX_PAYLOAD_BYTES, type=int)
     max_bytes = min(max_bytes, 65536)
 
@@ -130,10 +143,7 @@ def inspect_packet(packet_id):
     dump = _hex_dump(raw_bytes)
     layers = _extract_layers(raw_packet)
 
-    packet_meta = {}
-    captured = sniffer.captured_packets
-    if packet_id < len(captured):
-        packet_meta = captured[packet_id]
+    packet_meta = captured[packet_id] if packet_id < total_captured else {}
 
     return jsonify({
         'packet_id': packet_id,
@@ -144,6 +154,10 @@ def inspect_packet(packet_id):
         'total_bytes': dump['total_bytes'],
         'truncated': len(bytes(raw_packet)) > max_bytes,
         'raw_size': len(bytes(raw_packet)),
+        'buffer_info': {
+            'raw_buffer_size': total_raw,
+            'oldest_available': raw_offset,
+        }
     })
 
 
@@ -159,15 +173,20 @@ def recent_payloads():
     raw_packets = getattr(sniffer, '_raw_packet_buffer', [])
     captured = sniffer.captured_packets
 
-    start = max(0, len(captured) - limit)
+    total_captured = len(captured)
+    total_raw = len(raw_packets)
+    raw_offset = max(0, total_captured - total_raw)  # Index of captured[] that raw[0] maps to
+
+    start = max(0, total_captured - limit)
     results = []
-    for i in range(start, len(captured)):
+    for i in range(start, total_captured):
         meta = captured[i]
-        has_raw = i < len(raw_packets)
+        raw_index = i - raw_offset
+        has_raw = 0 <= raw_index < total_raw
         raw_size = 0
         if has_raw:
             try:
-                raw_size = len(bytes(raw_packets[i]))
+                raw_size = len(bytes(raw_packets[raw_index]))
             except Exception:
                 pass
         results.append({

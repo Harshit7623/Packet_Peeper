@@ -65,11 +65,13 @@ const getJwtSecret = () => {
 };
 
 const buildBackendEnv = () => {
+  const dataDir = app.getPath('userData');
   const baseEnv = {
     ...process.env,
     FLASK_PORT: BACKEND_PORT.toString(),
     PYTHONUNBUFFERED: '1',
     PACKET_PEEPER_DESKTOP: 'True',
+    PACKET_PEEPER_DATA_DIR: dataDir,
     FEATURE_ELECTRON_DESKTOP: 'True',
     DB_ENGINE: 'sqlite',
     ENABLE_AUTH: 'True',

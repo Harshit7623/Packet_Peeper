@@ -10,20 +10,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from unittest.mock import patch, MagicMock
 
 
-def test_lookup_returns_none_when_unavailable():
+def test_lookup_returns_none_for_private_ip_when_unavailable():
     from services.geoip_service import lookup
-    result = lookup('8.8.8.8')
+    result = lookup('192.168.1.1')
     assert result is None
 
 
-def test_is_available_false_without_db():
+def test_is_available_always_true_with_fallback():
     from services.geoip_service import is_available
-    assert is_available() is False
+    assert is_available() is True
 
 
-def test_batch_lookup_empty():
+def test_batch_lookup_private_ips():
     from services.geoip_service import batch_lookup
-    result = batch_lookup(['8.8.8.8', '1.1.1.1'])
+    result = batch_lookup(['192.168.1.1', '10.0.0.1'])
     assert result == {}
 
 

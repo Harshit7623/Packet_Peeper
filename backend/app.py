@@ -12,7 +12,7 @@ import threading
 import logging
 import logging.handlers
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify, g
 from flask_socketio import SocketIO
@@ -290,6 +290,8 @@ def device_update_loop():
 def traffic_update_loop():
     while True:
         try:
+            # Flush batched packets to frontend (replaces per-packet emit)
+            ext.flush_packet_batch()
             if ext.sniffer:
                 stats = ext.sniffer.get_statistics()
                 protocols = {
@@ -297,6 +299,9 @@ def traffic_update_loop():
                     'UDP': stats.get('udpPackets', 0),
                     'ICMP': stats.get('icmpPackets', 0),
                 }
+            else:
+                stats = {}
+                protocols = {'TCP': 0, 'UDP': 0, 'ICMP': 0}
             socketio.emit('traffic_update', {
                 'total_packets': stats.get('totalPackets', 0),
                 'bandwidth': {
@@ -306,6 +311,9 @@ def traffic_update_loop():
                 },
                 'protocols': protocols,
             }, namespace='/')
+            # Also push full stats so dashboard updates without per-packet overhead
+            if stats:
+                socketio.emit('update_statistics', stats, namespace='/')
             ext._persist_traffic_stats(stats)
             ext._persist_traffic_features(stats)
             time.sleep(TRAFFIC_UPDATE_INTERVAL)

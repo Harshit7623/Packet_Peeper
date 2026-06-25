@@ -1,7 +1,7 @@
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Search, Eye, Pause, Play, Download, ArrowRight, ShieldCheck, ShieldAlert, Radio, Filter, X, ChevronDown } from "lucide-react";
+import { Search, Eye, Pause, Play, Download, ArrowRight, ShieldCheck, ShieldAlert, Radio, Filter, X, ChevronDown, Globe, Wifi, Router } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,7 +57,8 @@ export default function PacketMonitor() {
       port: p.dst_port,
       service: p.service || 'Unknown',
       size: p.length,
-      status: 'Safe'
+      status: 'Safe',
+      destination_role: p.destination_role || null,
     })));
   }, [packets]);
 
@@ -389,6 +390,7 @@ export default function PacketMonitor() {
                     <th className="px-6 py-4">Flow (Source → Destination)</th>
                     <th className="px-6 py-4">Protocol</th>
                     <th className="px-6 py-4">Service</th>
+                    <th className="px-6 py-4">Dest Role</th>
                     <th className="px-6 py-4">Size</th>
                     <th className="px-6 py-4 text-center">Status</th>
                   </tr>
@@ -434,6 +436,26 @@ export default function PacketMonitor() {
                           </Badge>
                         </td>
                         <td className="px-6 py-3 text-foreground font-bold">{packet.service}</td>
+                        <td className="px-6 py-3">
+                          {packet.destination_role === 'router' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400">
+                              <Router size={10} /> Router
+                            </span>
+                          )}
+                          {packet.destination_role === 'local_device' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+                              <Wifi size={10} /> LAN
+                            </span>
+                          )}
+                          {packet.destination_role === 'internet_host' && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">
+                              <Globe size={10} /> Internet
+                            </span>
+                          )}
+                          {!packet.destination_role && (
+                            <span className="text-[10px] text-muted-foreground">—</span>
+                          )}
+                        </td>
                         <td className="px-6 py-3">
                           <div className="flex items-center gap-2">
                             <span className="w-12 text-right">{packet.size} B</span>

@@ -39,6 +39,10 @@ recent_packet_hashes = deque()
 recent_packet_hash_set = set()
 start_time = None
 
+# Packet batching — accumulate packets and flush periodically instead of per-packet emit
+_packet_batch_buffer = []
+_packet_batch_lock = threading.Lock()
+
 _traffic_feature_window = {
     'window_start': None,
     'total_packets': 0,
@@ -151,6 +155,11 @@ def _check_rate_limit(scope: str, max_requests: int, window_seconds: int):
         retry_after = max(1, int(window_seconds - (now - timestamps[0])))
         return False, retry_after
     timestamps.append(now)
+    # Periodically prune empty rate limiter keys to prevent memory leak
+    if len(rate_limit_state) > 1000:
+        empty_keys = [k for k, v in rate_limit_state.items() if not v]
+        for k in empty_keys:
+            del rate_limit_state[k]
     return True, 0
 
 
@@ -518,8 +527,9 @@ def packet_callback(packet_info: dict):
         if packet_info.get('alert_type') == 'security':
             security_alert_callback(packet_info)
             return
-        if socketio:
-            socketio.emit('new_packet', packet_info, namespace='/')
+        # Batch packets instead of emitting per-packet (prevents queue overflow)
+        with _packet_batch_lock:
+            _packet_batch_buffer.append(packet_info)
         if db_service and FEATURES['persistent_storage']:
             should_save = True
             payload_hash = packet_info.get('payload_hash')
@@ -542,16 +552,26 @@ def packet_callback(packet_info: dict):
             if should_save:
                 enqueue_task(db_service.save_packet, packet_info)
             _accumulate_packet_feature(packet_info)
-        if sniffer:
-            stats = sniffer.get_statistics()
-            if socketio:
-                socketio.emit('update_statistics', stats, namespace='/')
+        # Statistics emission is handled by traffic_update_loop, NOT here
         if logger.level == logging.DEBUG:
             add_log('debug', 'PacketSniffer',
                     f"Captured {packet_info.get('protocol')} packet: "
                     f"{packet_info.get('src_ip')} -> {packet_info.get('dst_ip')}")
     except Exception as e:
         logger.error(f"Error in packet callback: {type(e).__name__}: {str(e)}", exc_info=True)
+
+
+def flush_packet_batch():
+    """Flush buffered packets as a single batch emit. Called by traffic_update_loop."""
+    if not socketio:
+        return
+    with _packet_batch_lock:
+        if not _packet_batch_buffer:
+            return
+        batch = list(_packet_batch_buffer)
+        _packet_batch_buffer.clear()
+    # Emit the batch as a single event
+    socketio.emit('packet_batch', {'packets': batch, 'count': len(batch)}, namespace='/')
 
 
 def _collect_device_snapshot() -> list[dict]:

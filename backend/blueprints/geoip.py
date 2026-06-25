@@ -54,7 +54,11 @@ def threat_map():
 
     if ext.db_service and ext.FEATURES.get('persistent_storage'):
         try:
-            alert_records = ext.db_service.get_alerts(limit=200, org_id=org_id)
+            # get_alerts returns (records, total_count) tuple — unpack correctly
+            if org_id is not None and hasattr(ext.db_service, 'get_alerts_for_org'):
+                alert_records, _ = ext.db_service.get_alerts_for_org(org_id, limit=200)
+            else:
+                alert_records, _ = ext.db_service.get_alerts(limit=200)
             for a in alert_records:
                 src = a.get('source_ip')
                 if src:
@@ -86,5 +90,11 @@ def threat_map():
 
 @geoip_bp.route('/status', methods=['GET'])
 def geoip_status():
-    from services.geoip_service import is_available
-    return jsonify({'available': is_available()})
+    from services.geoip_service import is_available, get_cache_stats
+    stats = get_cache_stats()
+    return jsonify({
+        'available': is_available(),
+        'maxmind_available': stats.get('maxmind_available', False),
+        'fallback': 'ip-api.com',
+        'cache_size': stats.get('ip_api_cache_size', 0),
+    })

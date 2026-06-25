@@ -11,7 +11,7 @@ import datetime
 
 from flask import Blueprint, request, jsonify
 
-from config.config import CAPTURE_INTERFACE, ASYNC_PROCESSING
+from config.config import CAPTURE_INTERFACE, ASYNC_PROCESSING, FEATURES
 from services.packet_processor import get_packet_processor
 
 import extensions as ext

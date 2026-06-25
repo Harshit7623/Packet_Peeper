@@ -30,14 +30,30 @@ if PACKET_PEEPER_DESKTOP:
 else:
     DATA_ROOT = BASE_DIR
 
-CONFIG_DIR = BASE_DIR / "config"
+if PACKET_PEEPER_DESKTOP:
+    CONFIG_DIR = DATA_ROOT / "config"
+else:
+    CONFIG_DIR = BASE_DIR / "config"
 LOGS_DIR = DATA_ROOT / "logs"
 DATA_DIR = DATA_ROOT / "data"
 REPORTS_DIR = DATA_DIR / "reports"
 
 # Create directories if they don't exist
-for dir_path in [LOGS_DIR, DATA_DIR, REPORTS_DIR]:
+for dir_path in [LOGS_DIR, DATA_DIR, REPORTS_DIR, CONFIG_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
+
+# Seed user-data config from defaults if missing (AppImage/desktop mode)
+if PACKET_PEEPER_DESKTOP and CONFIG_DIR != BASE_DIR / "config":
+    _src_config = BASE_DIR / "config"
+    for _cfg_file in ["service_map.json"]:
+        _dst = CONFIG_DIR / _cfg_file
+        _src = _src_config / _cfg_file
+        if not _dst.exists() and _src.exists():
+            try:
+                import shutil
+                shutil.copy2(str(_src), str(_dst))
+            except Exception:
+                pass
 
 # ============== FLASK & SOCKETIO ==============
 FLASK_ENV = os.getenv("FLASK_ENV", "development")
@@ -92,7 +108,7 @@ PACKET_DEDUP_MAX = int(os.getenv("PACKET_DEDUP_MAX", 5000))
 
 # BPF Filter (Berkeley Packet Filter)
 BPF_FILTER = os.getenv("BPF_FILTER", 
-    "(tcp or udp) and not arp and not (udp and (port 67 or 68 or 5353 or 1900 or 123))"
+    "(tcp or udp or icmp or arp) and not (udp and (port 67 or 68 or 5353 or 1900 or 123))"
 )
 
 # ============== SERVICE CLASSIFICATION ==============

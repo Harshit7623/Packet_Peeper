@@ -88,6 +88,12 @@ class SocketService {
       useMonitorStore.getState().addPacket(packet);
     });
 
+    this.socket.on('packet_batch', (data: any) => {
+      if (data && data.packets && Array.isArray(data.packets)) {
+        useMonitorStore.getState().addPackets(data.packets);
+      }
+    });
+
     // Alert events
     this.socket.on('new_alert', (alert: any) => {
       console.log('🚨 New alert received:', alert);
