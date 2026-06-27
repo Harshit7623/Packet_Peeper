@@ -345,6 +345,36 @@ def get_ml_service() -> Optional[MLAnomalyService]:
     return _ml_service
 
 
+def _bg_init(service):
+    import time
+    import extensions as ext
+    # Wait up to 15 seconds for db_service to become available
+    for _ in range(15):
+        if getattr(ext, 'db_service', None):
+            break
+        time.sleep(1)
+
+    if not getattr(ext, 'db_service', None):
+        return
+
+    try:
+        # 1. Load recent traffic features to populate score history
+        rows = ext.db_service.get_traffic_features(limit=100)
+        if rows:
+            # Batch score them to populate _score_history
+            service.batch_score(rows)
+            logger.info(f"[ML] Populated initial score history with {len(rows)} recent windows")
+            
+        # 2. Automatically check if we can retrain on startup
+        train_rows = ext.db_service.get_traffic_features(limit=service.min_training_samples * 2)
+        if len(train_rows) >= service.min_training_samples:
+            logger.info("[ML] Automatically initiating startup model retraining...")
+            res = service.train(ext.db_service)
+            logger.info(f"[ML] Startup retrain result: {res}")
+    except Exception as e:
+        logger.warning(f"[ML] Background init task failed: {e}")
+
+
 def init_ml_service(model_dir: Path, score_threshold: float = -0.3,
                     training_window_hours: int = 168,
                     min_training_samples: int = 100) -> MLAnomalyService:
@@ -356,4 +386,6 @@ def init_ml_service(model_dir: Path, score_threshold: float = -0.3,
             training_window_hours=training_window_hours,
             min_training_samples=min_training_samples,
         )
+        import threading
+        threading.Thread(target=_bg_init, args=(_ml_service,), daemon=True, name="MLStartupInitThread").start()
     return _ml_service

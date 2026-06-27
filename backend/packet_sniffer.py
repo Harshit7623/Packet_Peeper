@@ -161,39 +161,49 @@ def _update_cache_from_dns(pkt):
     ancount = dns.ancount or 0
     if ancount == 0:
         return
-    answers = [dns.an] if ancount == 1 else dns.an
-    for rr in answers:
-        if isinstance(rr, DNSRR):
-            if rr.type in (1, 28) and rr.rdata:  # A/AAAA only
-                ip = rr.rdata if isinstance(rr.rdata, str) else None
-                host = rr.rrname.decode().rstrip(".") if rr.rrname else None
-                if ip and host:
-                    srv = _match_service_from_hostname(host)
-                    ttl = getattr(rr, "ttl", DNS_TTL_DEFAULT) or DNS_TTL_DEFAULT
-                    service_cache.put(ip, host, srv, ttl)
+    for i in range(ancount):
+        try:
+            rr = dns.an[i]
+            if isinstance(rr, DNSRR):
+                if rr.type in (1, 28) and rr.rdata:  # A/AAAA only
+                    ip = rr.rdata if isinstance(rr.rdata, str) else rr.rdata.decode() if isinstance(rr.rdata, bytes) else None
+                    host = rr.rrname.decode().rstrip(".") if rr.rrname else None
+                    if ip and host:
+                        srv = _match_service_from_hostname(host)
+                        ttl = getattr(rr, "ttl", DNS_TTL_DEFAULT) or DNS_TTL_DEFAULT
+                        service_cache.put(ip, host, srv, ttl)
+        except Exception:
+            pass
 
 SERVICE_MAP.update({
-    "microsoft": ["outlook.com", "office.com", "office365.com", "live.com", "skype.com"],
+    "google": ["google.com", "googleapis.com", "gstatic.com", "1e100.net", "googlevideo.com"],
+    "facebook": ["facebook.com", "fbcdn.net", "fbsbx.com", "instagram.com", "cdninstagram.com"],
+    "whatsapp": ["whatsapp.com", "whatsapp.net"],
+    "microsoft": ["outlook.com", "office.com", "office365.com", "live.com", "skype.com", "microsoft.com", "msn.com"],
+    "apple": ["apple.com", "icloud.com", "mzstatic.com"],
     "telegram": ["telegram.org", "t.me"],
     "slack": ["slack.com"],
     "zoom": ["zoom.us"],
-    "aws": ["amazonaws.com"],
-    "cloudflare": ["cloudflare.com", "cf-ipfs.com"],
+    "aws": ["amazonaws.com", "aws.dev"],
+    "cloudflare": ["cloudflare.com", "cf-ipfs.com", "cloudflare.net", "1.1.1.1"],
     "twitter": ["twitter.com", "x.com", "twimg.com"],
     "reddit": ["reddit.com", "redd.it", "redditstatic.com"],
     "github": ["github.com", "githubusercontent.com", "github.io"],
-    "amazon": ["amazon.com", "amazon.in", "ssl-images-amazon.com"],
+    "amazon": ["amazon.com", "amazon.in", "ssl-images-amazon.com", "media-amazon.com"],
     "spotify": ["spotify.com", "scdn.co"],
-    "discord": ["discord.com", "discord.gg", "discordapp.com"],
+    "discord": ["discord.com", "discord.gg", "discordapp.com", "discordapp.net"],
     "mozilla": ["mozilla.org", "mozilla.com", "mozilla.net", "firefox.com"],
+    "netflix": ["netflix.com", "nflxso.net", "nflximg.net", "nflxvideo.net"],
 })
 
 # Expanded IP ranges (example; can be extended)
 IP_NETS = {
-    "google": ["142.250.0.0/15", "172.217.0.0/16", "74.125.0.0/16"],
-    "facebook": ["157.240.0.0/16", "31.13.0.0/16"],
+    "google": ["142.250.0.0/15", "172.217.0.0/16", "74.125.0.0/16", "8.8.8.8/32", "8.8.4.4/32", "2001:4860::/32"],
+    "facebook": ["157.240.0.0/16", "31.13.0.0/16", "2a03:2880::/32"],
     "whatsapp": ["157.240.0.0/16", "31.13.0.0/16"],
-    "microsoft": ["40.0.0.0/8"],
+    "microsoft": ["40.0.0.0/8", "13.64.0.0/11", "52.112.0.0/14"],
+    "cloudflare": ["1.1.1.1/32", "1.0.0.1/32", "104.16.0.0/12", "172.64.0.0/13", "2606:4700::/32"],
+    "apple": ["17.0.0.0/8"],
     "netflix": ["52.89.0.0/16", "52.88.0.0/15"],
 }
 
@@ -221,12 +231,19 @@ def classify_packet_service(packet):
     if packet.haslayer(IP):
         src_ip = packet[IP].src
         dst_ip = packet[IP].dst
+    elif packet.haslayer('IPv6'):
+        src_ip = packet['IPv6'].src
+        dst_ip = packet['IPv6'].dst
 
+    if src_ip or dst_ip:
         # Check passive cache
         for ip in [src_ip, dst_ip]:
             cached = service_cache.get(ip)
             if cached:
-                return cached["service"]
+                if cached["service"] != "Unknown":
+                    return cached["service"]
+                elif not hostname and cached.get("hostname"):
+                    hostname = cached["hostname"]
 
     # DNS classification
     if packet.haslayer(DNS) and packet.getlayer(DNS).qr == 0:
@@ -288,7 +305,7 @@ class PacketSniffer:
 
     def __init__(self):
         import threading as _threading
-        self._lock = _threading.Lock()  # Thread safety for shared state
+        self._lock = _threading.RLock()  # Reentrant lock for nested calls
         self.captured_packets = deque(maxlen=MAX_PACKET_HISTORY)  # Auto-discards oldest; O(1) append
         self.categories = {}
         self.callback = None
@@ -522,30 +539,16 @@ class PacketSniffer:
         """Check if an IP is in the local network range or any private IP range."""
         if not ip or ip == '0.0.0.0':
             return False
+        from utils.network_utils import is_private_ip
+        if is_private_ip(ip):
+            return True
         try:
-            ip_obj = ipaddress.ip_address(ip)
-            
-            # Always allow private IP ranges (RFC 1918)
-            private_networks = [
-                ipaddress.ip_network('10.0.0.0/8'),
-                ipaddress.ip_network('172.16.0.0/12'),
-                ipaddress.ip_network('192.168.0.0/16'),
-                ipaddress.ip_network('127.0.0.0/8'),  # Loopback
-            ]
-            
-            for network in private_networks:
-                if ip_obj in network:
-                    return True
-            
-            # Also check specific local_network if detected
             if self.local_network:
-                if ip_obj in ipaddress.ip_network(self.local_network):
+                if ipaddress.ip_address(ip) in ipaddress.ip_network(self.local_network):
                     return True
-            
-            return False
-        except Exception as e:
-            logging.debug(f"is_local_ip error for {ip}: {e}")
-            return False
+        except Exception:
+            pass
+        return False
 
     def _is_infrastructure_ip(self, ip):
         """Check if an IP is likely a router/switch/DNS server (infrastructure)."""
@@ -582,17 +585,17 @@ class PacketSniffer:
             return
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        if ip not in self.active_devices:
+        with self._lock:
+            already_known = ip in self.active_devices
+
+        if not already_known:
             from scapy.layers.l2 import getmacbyip, ARP, Ether
             from scapy.sendrecv import srp
 
-            # Try to get MAC address if not provided
             if not mac:
                 try:
-                    # First try getmacbyip
                     mac = getmacbyip(ip)
                     if not mac:
-                        # If that fails, try ARP
                         ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip), timeout=2, verbose=0)
                         if ans:
                             mac = ans[0][1].hwsrc
@@ -639,40 +642,43 @@ class PacketSniffer:
                 except Exception:
                     pass
 
-            self.active_devices[ip] = {
-                'ipAddress': ip,
-                'macAddress': mac,
-                'hostname': hostname,
-                'type': device_type,
-                'firstSeen': current_time,
-                'lastSeen': current_time,
-                'packetsIn': 0,
-                'packetsOut': 0,
-                'bytesIn': 0,
-                'bytesOut': 0,
-                'isLocal': self.is_local_ip(ip),
-                'status': 'Active'
-            }
-            _debug_log(f"New device detected: IP={ip}, MAC={mac}, Type={device_type}")
-        
-        device = self.active_devices[ip]
-        device['lastSeen'] = current_time
-        if is_source:
-            device['packetsOut'] += 1
-            device['bytesOut'] += packet_len
-        else:
-            device['packetsIn'] += 1
-            device['bytesIn'] += packet_len
+        with self._lock:
+            if ip not in self.active_devices:
+                self.active_devices[ip] = {
+                    'ipAddress': ip,
+                    'macAddress': mac,
+                    'hostname': hostname,
+                    'type': device_type,
+                    'firstSeen': current_time,
+                    'lastSeen': current_time,
+                    'packetsIn': 0,
+                    'packetsOut': 0,
+                    'bytesIn': 0,
+                    'bytesOut': 0,
+                    'isLocal': self.is_local_ip(ip),
+                    'status': 'Active'
+                }
+                _debug_log(f"New device detected: IP={ip}, MAC={mac}, Type={device_type}")
+
+            device = self.active_devices[ip]
+            device['lastSeen'] = current_time
+            if is_source:
+                device['packetsOut'] += 1
+                device['bytesOut'] += packet_len
+            else:
+                device['packetsIn'] += 1
+                device['bytesIn'] += packet_len
 
     def update_device_stats(self, iface, packet):
         """Increment packet and byte counters for a given interface."""
-        if iface in self.device_stats:
-            self.device_stats[iface]['packets'] += 1
-            self.device_stats[iface]['bytes'] += len(packet)
-            self.device_stats[iface]['last_seen'] = time.time()
-            if iface in self.devices:
-                self.devices[iface]['packetsCaptured'] = self.device_stats[iface]['packets']
-                self.devices[iface]['lastActive'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with self._lock:
+            if iface in self.device_stats:
+                self.device_stats[iface]['packets'] += 1
+                self.device_stats[iface]['bytes'] += len(packet)
+                self.device_stats[iface]['last_seen'] = time.time()
+                if iface in self.devices:
+                    self.devices[iface]['packetsCaptured'] = self.device_stats[iface]['packets']
+                    self.devices[iface]['lastActive'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     def set_callback(self, callback):
         """Register a callback for packet capture events."""
@@ -724,46 +730,49 @@ class PacketSniffer:
             return None, False
 
         current_time = time.time()
-        if stream_key not in self.tcp_streams:
-            self.tcp_streams[stream_key] = {
-                'packets': [],
-                'last_seen': current_time,
-                'size': 0,
-                'complete': False,
-                'service': packet_info.get('service', 'Unknown')
-            }
+        with self._lock:
+            if stream_key not in self.tcp_streams:
+                self.tcp_streams[stream_key] = {
+                    'packets': [],
+                    'last_seen': current_time,
+                    'size': 0,
+                    'complete': False,
+                    'service': packet_info.get('service', 'Unknown')
+                }
 
-        stream = self.tcp_streams[stream_key]
-        if current_time - stream['last_seen'] > self.stream_timeout:
-            stream['complete'] = True
-            return None, False
+            stream = self.tcp_streams[stream_key]
+            if current_time - stream['last_seen'] > self.stream_timeout:
+                stream['complete'] = True
+                return None, False
 
-        stream['last_seen'] = current_time
-        stream['packets'].append({
-            'timestamp': packet_info['timestamp'],
-            'data': raw_data,
-            'src_ip': packet_info['src_ip'],
-            'dst_ip': packet_info['dst_ip'],
-            'src_port': packet_info['src_port'],
-            'dst_port': packet_info['dst_port']
-        })
-        stream['size'] += len(raw_data)
+            stream['last_seen'] = current_time
+            stream['packets'].append({
+                'timestamp': packet_info['timestamp'],
+                'data': raw_data,
+                'src_ip': packet_info['src_ip'],
+                'dst_ip': packet_info['dst_ip'],
+                'src_port': packet_info['src_port'],
+                'dst_port': packet_info['dst_port']
+            })
+            stream['size'] += len(raw_data)
 
-        if packet_info.get('tcp_flags', 0) & 0x01 or packet_info.get('tcp_flags', 0) & 0x04:
-            stream['complete'] = True
-        if stream['size'] > self.max_stream_size:
-            stream['complete'] = True
+            if packet_info.get('tcp_flags', 0) & 0x01 or packet_info.get('tcp_flags', 0) & 0x04:
+                stream['complete'] = True
+            if stream['size'] > self.max_stream_size:
+                stream['complete'] = True
 
-        return stream_key, stream['complete']
+            return stream_key, stream['complete']
 
     def get_complete_streams(self):
         """Return completed or timed-out streams and remove them from memory."""
         current_time = time.time()
-        complete_streams = {}
-        for stream_key, stream in list(self.tcp_streams.items()):
-            if stream['complete'] or (current_time - stream['last_seen'] > self.stream_timeout):
-                complete_streams[stream_key] = stream
-                del self.tcp_streams[stream_key]
+        with self._lock:
+            complete_streams = {}
+            for stream_key in list(self.tcp_streams.keys()):
+                stream = self.tcp_streams[stream_key]
+                if stream['complete'] or (current_time - stream['last_seen'] > self.stream_timeout):
+                    complete_streams[stream_key] = stream
+                    del self.tcp_streams[stream_key]
         return complete_streams
 
 
@@ -823,6 +832,18 @@ class PacketSniffer:
                 packet_info["protocol"] = "ICMP"
                 self.icmp_count += 1
             
+            # Extract raw payload for security analysis
+            try:
+                from scapy.packet import Raw
+                if packet.haslayer(Raw):
+                    raw_load = packet[Raw].load
+                    if isinstance(raw_load, bytes):
+                        packet_info["payload"] = raw_load.decode(errors="replace")
+                    else:
+                        packet_info["payload"] = str(raw_load)
+            except Exception:
+                pass
+            
             # Handle ARP packets for spoofing detection
             try:
                 from scapy.layers.l2 import ARP as ARP_Layer
@@ -844,7 +865,6 @@ class PacketSniffer:
             now = time.time()
             with self._lock:
                 self.bandwidth_history.append((now, len(packet)))
-                # Prune old samples (>60s) periodically, not every packet
                 if len(self.bandwidth_history) > 5000:
                     self.bandwidth_history = [(t, b) for t, b in self.bandwidth_history if now - t <= 60]
             # Device filter
@@ -865,27 +885,37 @@ class PacketSniffer:
                 packet_info["destination_role"] = "local_device"
             else:
                 packet_info["destination_role"] = "internet_host"
+            try:
+                from services.geoip_service import lookup
+                for ip_val, direction in ((packet_info.get("src_ip"), "Src"), (packet_info.get("dst_ip"), "Dest")):
+                    if ip_val and not self.is_local_ip(ip_val) and not self._is_infrastructure_ip(ip_val):
+                        geo = lookup(ip_val)
+                        if geo and geo.get("country"):
+                            packet_info["country"] = geo.get("country")
+                            packet_info["city"] = geo.get("city")
+                            packet_info["country_code"] = geo.get("country_code")
+                            packet_info["geo_direction"] = direction
+                            break
+            except Exception:
+                pass
             if PACKET_HASH_MAX_BYTES > 0 and CAPTURE_MODE != "lite":
                 try:
                     raw_bytes = bytes(packet)
                     packet_info["payload_hash"] = hashlib.sha256(raw_bytes[:PACKET_HASH_MAX_BYTES]).hexdigest()
                 except Exception as e:
                     _debug_log(f"Failed to hash packet payload: {e}")
-            # Metrics
-            self.metrics["total"] += 1
-            if srv != "Unknown":
-                self.metrics["classified"] += 1
-            else:
-                self.metrics["unknown"] += 1
-            self.metrics["by_service"][srv] = self.metrics["by_service"].get(srv, 0) + 1
-            # Store & categorize (deque auto-discards oldest when full)
-            self.captured_packets.append(packet_info)
-
-            self._raw_packet_buffer.append(packet)
-
-            self.categories.setdefault(srv, []).append(packet_info)
-            if len(self.categories[srv]) > MAX_CATEGORY_HISTORY:
-                self.categories[srv] = self.categories[srv][-MAX_CATEGORY_HISTORY:]
+            with self._lock:
+                self.metrics["total"] += 1
+                if srv != "Unknown":
+                    self.metrics["classified"] += 1
+                else:
+                    self.metrics["unknown"] += 1
+                self.metrics["by_service"][srv] = self.metrics["by_service"].get(srv, 0) + 1
+                self.captured_packets.append(packet_info)
+                self._raw_packet_buffer.append(packet)
+                self.categories.setdefault(srv, []).append(packet_info)
+                if len(self.categories[srv]) > MAX_CATEGORY_HISTORY:
+                    self.categories[srv] = self.categories[srv][-MAX_CATEGORY_HISTORY:]
             
             # Update active devices
             if packet.haslayer(IP):
@@ -927,25 +957,26 @@ class PacketSniffer:
             if alerts:
                 _debug_log(f"Found {len(alerts)} security alerts!")
                 for alert in alerts:
-                    alert_hash = f"{alert['title']}-{alert['source']}-{time.time() // 300}"  # 5-minute window
-                    
-                    # Check if this exact alert was recently issued
-                    if alert_hash not in [a.get('hash', '') for a in self.security_alerts[-10:]]:
-                        self.security_alerts.append({**alert, 'hash': alert_hash})
-                        if len(self.security_alerts) > MAX_SECURITY_ALERTS:
-                            self.security_alerts = self.security_alerts[-MAX_SECURITY_ALERTS:]
-                        
+                    alert_hash = f"{alert['title']}-{alert['source']}-{time.time() // 300}"
+                    with self._lock:
+                        recent_hashes = [a.get('hash', '') for a in self.security_alerts[-10:]]
+                        if alert_hash not in recent_hashes:
+                            self.security_alerts.append({**alert, 'hash': alert_hash})
+                            if len(self.security_alerts) > MAX_SECURITY_ALERTS:
+                                self.security_alerts = self.security_alerts[-MAX_SECURITY_ALERTS:]
+                            should_callback = True
+                        else:
+                            should_callback = False
+                    if should_callback:
                         _debug_log(f"[ALERT] {alert['title']}")
                         _debug_log(f"Description: {alert['description']}")
                         _debug_log(f"Severity: {alert['severity']}")
                         _debug_log(f"Source: {alert['source']}")
                         _debug_log(f"Timestamp: {alert['timestamp']}")
-                        
-                        # Pass alert through callback to ensure it reaches the frontend
                         if self.callback:
                             alert_copy = alert.copy()
-                            alert_copy['alert_type'] = 'security'  # Mark as security alert
-                            alert_copy['packet_info'] = packet_info  # Include triggering packet
+                            alert_copy['alert_type'] = 'security'
+                            alert_copy['packet_info'] = packet_info
                             _debug_log("Sending alert to frontend via callback")
                             self.callback(alert_copy)
             # Ensure tcp_flags is JSON serializable
@@ -1010,7 +1041,26 @@ class PacketSniffer:
 
         logger.info(f"Starting capture on interface: {actual_interface}")
         logger.info("Waiting for packets...")
-        
+
+        # ---- Try native Rust capture engine first ----
+        try:
+            from rust_bridge import RustBridge, RUST_AVAILABLE
+            if RUST_AVAILABLE:
+                bridge = RustBridge(self.handle_packet)
+                if bridge.start(actual_interface, bpf):
+                    logger.info(f"[RustBridge] Native capture running on {actual_interface}")
+                    try:
+                        import time as _time
+                        while self._running:
+                            _time.sleep(0.1)
+                    finally:
+                        bridge.stop()
+                    logger.info("[RustBridge] Native capture exited")
+                    return
+        except Exception as _rb_err:
+            logger.warning(f"[RustBridge] Could not start native capture ({_rb_err}), falling back to Scapy")
+
+        # ---- Scapy fallback ----
         # Start the actual sniffing with auto-restart on failure
         retry_count = 0
         max_retries = 5
@@ -1053,19 +1103,23 @@ class PacketSniffer:
 
     def get_statistics(self):
         now = time.time()
-        # Bandwidth calculations — use 5-second rolling window for accuracy
         with self._lock:
             bw_snapshot = list(self.bandwidth_history)
+            captured_len = len(self.captured_packets)
+            tcp_count = self.tcp_count
+            udp_count = self.udp_count
+            icmp_count = self.icmp_count
+            cat_snapshot = {srv: len(pkts) for srv, pkts in self.categories.items()}
+            metrics_total = self.metrics["total"]
+            peak_bw = self.peak_bandwidth
         bytes_last_5s = sum(b for t, b in bw_snapshot if now - t <= 5)
         bytes_last_min = sum(b for t, b in bw_snapshot if now - t <= 60)
-        current_bandwidth = bytes_last_5s // 5 if bytes_last_5s else 0  # bytes per second
+        current_bandwidth = bytes_last_5s // 5 if bytes_last_5s else 0
         average_bandwidth = bytes_last_min // 60 if bytes_last_min else 0
-        self.peak_bandwidth = max(self.peak_bandwidth, current_bandwidth)
-        # Network performance (mocked for now)
+        self.peak_bandwidth = max(peak_bw, current_bandwidth)
         latency = self._calculate_latency()
         jitter = self._calculate_jitter()
         packet_loss = self._calculate_packet_loss()
-        # System resource usage — non-blocking CPU (update every 3 seconds)
         if now - self._last_cpu_check >= 3:
             self._cached_cpu = psutil.cpu_percent(interval=0)
             self._last_cpu_check = now
@@ -1074,17 +1128,16 @@ class PacketSniffer:
         memory_usage = min(max(mem.percent, 0), 100)
         disk = psutil.disk_usage('/')
         disk_usage = min(max(disk.percent, 0), 100)
-        # Get packet statistics from security monitor
         monitor_stats = self.security_monitor.get_packet_stats()
         
         stats = {
             "currentBandwidth": current_bandwidth,
             "peakBandwidth": self.peak_bandwidth,
             "averageBandwidth": average_bandwidth,
-            "totalPackets": len(self.captured_packets),
-            "tcpPackets": self.tcp_count,
-            "udpPackets": self.udp_count,
-            "icmpPackets": self.icmp_count,
+            "totalPackets": captured_len,
+            "tcpPackets": tcp_count,
+            "udpPackets": udp_count,
+            "icmpPackets": icmp_count,
             "httpPackets": monitor_stats['http'],
             "httpsPackets": monitor_stats['https'],
             "dnsPackets": monitor_stats['dns'],
@@ -1095,8 +1148,7 @@ class PacketSniffer:
             "memoryUsage": memory_usage,
             "diskUsage": disk_usage
         }
-        # Add service breakdown
-        stats.update({srv: len(pkts) for srv, pkts in self.categories.items()})
+        stats.update(cat_snapshot)
         return stats
 
     def _calculate_latency(self):
@@ -1112,15 +1164,28 @@ class PacketSniffer:
         return 2
 
     def _calculate_packet_loss(self):
-        # Placeholder: simulate packet loss percentage
-        total = self.metrics["total"]
+        with self._lock:
+            total = self.metrics["total"]
         lost = self.packet_loss_count
         if total:
             return round((lost / total) * 100, 2)
         return 0
 
     def get_categorized_packets(self):
-        return self.categories
+        with self._lock:
+            return {srv: list(pkts) for srv, pkts in self.categories.items()}
+
+    def get_active_devices_snapshot(self):
+        with self._lock:
+            return {ip: dict(dev) for ip, dev in self.active_devices.items()}
+
+    def get_security_alerts_snapshot(self):
+        with self._lock:
+            return list(self.security_alerts)
+
+    def clear_active_devices(self):
+        with self._lock:
+            self.active_devices.clear()
 
     def get_host_ip(self):
         """Get the host machine's IP address"""
@@ -1137,19 +1202,13 @@ class PacketSniffer:
             return None
 
     def get_packets_by_service(self, service=None, since_seconds=None):
-        """
-        Filter captured packets by service and/or time.
-        service: e.g. 'whatsapp'
-        since_seconds: e.g. 3600 for last hour
-        """
         now = time.time()
+        with self._lock:
+            packets_snapshot = list(self.captured_packets)
         results = []
-        for pkt in self.captured_packets:
-            # Service match
+        for pkt in packets_snapshot:
             if service and pkt['service'].lower() != service.lower():
                 continue
-
-            # Time match
             if since_seconds:
                 try:
                     ts = datetime.strptime(pkt['timestamp'], "%Y-%m-%d %H:%M:%S.%f")
@@ -1157,7 +1216,6 @@ class PacketSniffer:
                     ts = datetime.strptime(pkt['timestamp'], "%Y-%m-%d %H:%M:%S")
                 if (now - ts.timestamp()) > since_seconds:
                     continue
-
             results.append(pkt)
         return results
 

@@ -284,7 +284,7 @@ def api_clear_all():
         if ext.sniffer:
             ext.sniffer.captured_packets.clear()
             ext.sniffer.devices.clear()
-            ext.sniffer.active_devices.clear()
+            ext.sniffer.clear_active_devices()
         if ext.db_service and FEATURES['persistent_storage']:
             with ext.db_service.get_session() as session:
                 session.query(AlertRecord).delete()

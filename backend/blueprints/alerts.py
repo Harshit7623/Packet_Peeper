@@ -4,6 +4,8 @@ Handles alert retrieval, security alerts, dismissal, and clearing.
 """
 
 import logging
+import time
+import threading
 
 from flask import Blueprint, request, jsonify
 
@@ -83,8 +85,7 @@ def api_dismiss_alert(alert_id):
             ext.alerts = [a for a in ext.alerts if a.get('id') != alert_id]
             if ext.db_service:
                 ext.db_service.dismiss_alert(alert_id)
-        if ext.socketio:
-            with ext.alerts_lock:
+            if ext.socketio:
                 ext.socketio.emit('alerts_sync', list(ext.alerts), namespace='/')
         return jsonify({'message': f'Alert {alert_id} dismissed'})
     except Exception as e:
@@ -107,10 +108,59 @@ def api_clear_alerts():
                 ext.sniffer.security_monitor.reset_counters()
             except Exception as e:
                 errors.append(f"Counter reset failed: {str(e)}")
+        if ext.sniffer and hasattr(ext.sniffer, 'security_alerts'):
+            try:
+                with ext.sniffer._lock:
+                    ext.sniffer.security_alerts.clear()
+            except Exception:
+                pass
+        if ext.socketio:
+            ext.socketio.emit('alerts_sync', [], namespace='/')
     ext.add_log('info', 'API', 'All alerts cleared and security counters reset')
-    if ext.socketio:
-        ext.socketio.emit('alerts_sync', [], namespace='/')
     if errors:
         logger.warning(f"Partial errors during alert clear: {errors}")
         return jsonify({'message': 'Alerts cleared with warnings', 'warnings': errors})
     return jsonify({'message': 'All alerts cleared'})
+
+
+@bp.route('/alerts/inject', methods=['POST'])
+def api_inject_attack_alerts():
+    data = request.get_json(silent=True) or {}
+    packets = data.get('packets', data.get('packet', []))
+    if isinstance(packets, dict):
+        packets = [packets]
+    if not packets:
+        return jsonify({'error': 'No packets provided, send {"packets": [...]}'}), 400
+
+    from network_security_monitor import NetworkSecurityMonitor
+
+    monitor = NetworkSecurityMonitor()
+    monitor.enable_test_mode()
+
+    generated_alerts = []
+
+    def alert_callback(alert_copy):
+        try:
+            ext.packet_callback(alert_copy)
+        except Exception:
+            pass
+
+    for pkt in packets:
+        try:
+            alerts = monitor.analyze_packet(pkt)
+            for alert in (alerts or []):
+                if alert is None:
+                    continue
+                alert_copy = alert.copy()
+                alert_copy['alert_type'] = 'security'
+                alert_copy['packet_info'] = pkt
+                generated_alerts.append(alert_copy)
+                ext.packet_callback(alert_copy)
+        except Exception as e:
+            logger.error(f"Error injecting packet: {e}")
+
+    return jsonify({
+        'message': f'Injected {len(packets)} packets, generated {len(generated_alerts)} alerts',
+        'alerts_generated': len(generated_alerts),
+        'alerts': generated_alerts,
+    })

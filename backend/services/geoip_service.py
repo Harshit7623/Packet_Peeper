@@ -11,6 +11,8 @@ import time
 import threading
 from typing import Dict, List, Optional
 
+from utils.network_utils import is_reserved_ip
+
 logger = logging.getLogger('packet_peeper')
 
 _MAXMIND_DB_PATH = os.environ.get(
@@ -36,6 +38,12 @@ def _init_reader():
     try:
         import maxminddb
         db_path = _MAXMIND_DB_PATH
+        if not os.path.isfile(db_path):
+            # Check unpacked directory fallback
+            alt_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'GeoLite2-City_20260626', 'GeoLite2-City.mmdb')
+            if os.path.isfile(alt_path):
+                db_path = alt_path
+
         if os.path.isfile(db_path):
             _geoip_reader = maxminddb.open_database(db_path)
             _geoip_available = True
@@ -71,28 +79,45 @@ def is_available() -> bool:
 
 
 def _is_private_ip(ip: str) -> bool:
-    """Check if IP is private/reserved (not resolvable via GeoIP)."""
-    if not ip:
-        return True
-    try:
-        parts = ip.split('.')
-        if len(parts) != 4:
-            return ':' in ip  # IPv6 link-local etc.
-        first = int(parts[0])
-        second = int(parts[1])
-        if first == 10:
-            return True
-        if first == 172 and 16 <= second <= 31:
-            return True
-        if first == 192 and second == 168:
-            return True
-        if first == 127:
-            return True
-        if first == 0 or first >= 224:
-            return True
-        return False
-    except Exception:
-        return True
+    """Check if IP is private/reserved (not resolvable via GeoIP).
+
+    Delegates to the shared is_reserved_ip utility which covers
+    RFC 1918, loopback, multicast, link-local, and other reserved ranges.
+    """
+    return is_reserved_ip(ip)
+
+
+# NAT64 prefix that many ISPs use (RFC 6052)
+_NAT64_PREFIXES = ['64:ff9b::', '64:ff9b:1::', '2001:db8::']
+
+
+def _normalize_ip(ip: str) -> str:
+    """
+    Normalise an IP address for GeoIP lookup:
+    - Strips NAT64-embedded IPv4 (64:ff9b::a.b.c.d) -> 'a.b.c.d'
+    - Returns the input unchanged otherwise.
+    """
+    if not ip or ':' not in ip:
+        return ip
+    # Detect NAT64 64:ff9b:: prefix (most common)
+    lower = ip.lower()
+    for prefix in _NAT64_PREFIXES:
+        if lower.startswith(prefix):
+            # The last 32 bits are the embedded IPv4
+            # e.g. 64:ff9b::2236:546e -> decode last two groups as IPv4
+            try:
+                import ipaddress
+                addr = ipaddress.IPv6Address(ip)
+                # Extract last 4 bytes as IPv4
+                packed = addr.packed
+                ipv4 = '.'.join(str(b) for b in packed[-4:])
+                return ipv4
+            except Exception:
+                pass
+    # Plain IPv4-mapped IPv6 (::ffff:a.b.c.d)
+    if lower.startswith('::ffff:'):
+        return ip[7:]
+    return ip
 
 
 def _lookup_maxmind(ip: str) -> Optional[Dict]:
@@ -203,17 +228,28 @@ def _lookup_ip_api(ip: str) -> Optional[Dict]:
 
 
 def lookup(ip: str) -> Optional[Dict]:
-    """Look up IP geolocation. Tries MaxMind first, falls back to ip-api.com."""
-    if _is_private_ip(ip):
+    """Look up IP geolocation. Normalises NAT64 first, then tries MaxMind → ip-api.com."""
+    if not ip:
+        return None
+
+    # Normalise NAT64 / IPv4-mapped IPv6 to plain IPv4 for lookup
+    normalised = _normalize_ip(ip)
+
+    if _is_private_ip(normalised):
         return None
 
     # Try MaxMind first (fast, offline)
-    result = _lookup_maxmind(ip)
+    result = _lookup_maxmind(normalised)
     if result:
+        # Tag with original IP so frontend can match
+        result['original_ip'] = ip
         return result
 
     # Fallback to ip-api.com (online, rate-limited)
-    return _lookup_ip_api(ip)
+    result = _lookup_ip_api(normalised)
+    if result:
+        result['original_ip'] = ip
+    return result
 
 
 def batch_lookup(ips: List[str]) -> Dict[str, Dict]:

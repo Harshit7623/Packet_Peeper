@@ -52,6 +52,22 @@ def threat_map():
             if src and src not in source_ips:
                 source_ips.add(src)
 
+    if hasattr(ext, 'sniffer') and ext.sniffer:
+        try:
+            with ext.sniffer._lock:
+                if hasattr(ext.sniffer, 'active_devices'):
+                    for ip, dev in ext.sniffer.active_devices.items():
+                        if ip and not dev.get('isLocal'):
+                            source_ips.add(ip)
+                if hasattr(ext.sniffer, 'captured_packets'):
+                    for pkt in ext.sniffer.captured_packets:
+                        for ip_field in ('src_ip', 'dst_ip'):
+                            ip = pkt.get(ip_field)
+                            if ip and not ext.sniffer.is_local_ip(ip) and not ext.sniffer._is_infrastructure_ip(ip):
+                                source_ips.add(ip)
+        except Exception:
+            pass
+
     if ext.db_service and ext.FEATURES.get('persistent_storage'):
         try:
             # get_alerts returns (records, total_count) tuple — unpack correctly

@@ -33,7 +33,7 @@ RBAC_ENDPOINT_RULES = {
     '/api/debug/scan-tracker': {'roles': {'admin'}},
     '/api/ml/retrain': {'roles': {'admin', 'operator'}},
     '/api/ml/config': {'roles': {'admin'}, 'methods': {'POST'}},
-    '/api/alerts/clear': {'roles': {'admin'}},
+    '/api/alerts/clear': {'roles': {'admin', 'operator'}},
     '/api/logs/clear': {'roles': {'admin'}},
     '/api/network/scan': {'roles': {'admin', 'operator'}},
     '/api/admin': {'roles': {'admin'}, 'prefix': True},

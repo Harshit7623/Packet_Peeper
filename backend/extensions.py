@@ -39,6 +39,17 @@ recent_packet_hashes = deque()
 recent_packet_hash_set = set()
 start_time = None
 
+# Monotonic alert ID counter — never resets, guarantees unique React keys
+_alert_id_counter = 0
+_alert_id_lock = threading.Lock()
+
+
+def _next_alert_id() -> int:
+    global _alert_id_counter
+    with _alert_id_lock:
+        _alert_id_counter += 1
+        return _alert_id_counter
+
 # Packet batching — accumulate packets and flush periodically instead of per-packet emit
 _packet_batch_buffer = []
 _packet_batch_lock = threading.Lock()
@@ -155,10 +166,9 @@ def _check_rate_limit(scope: str, max_requests: int, window_seconds: int):
         retry_after = max(1, int(window_seconds - (now - timestamps[0])))
         return False, retry_after
     timestamps.append(now)
-    # Periodically prune empty rate limiter keys to prevent memory leak
-    if len(rate_limit_state) > 1000:
-        empty_keys = [k for k, v in rate_limit_state.items() if not v]
-        for k in empty_keys:
+    if len(rate_limit_state) > 500:
+        stale_keys = [k for k, v in rate_limit_state.items() if not v or (v and now - v[-1] > window_seconds * 2)]
+        for k in stale_keys:
             del rate_limit_state[k]
     return True, 0
 
@@ -182,7 +192,7 @@ def _normalize_alert(alert: dict) -> dict:
     if normalized.get('type') and not normalized.get('alert_type'):
         normalized['alert_type'] = normalized.get('type')
     normalized.setdefault('severity', 'medium')
-    normalized.setdefault('timestamp', datetime.datetime.now().isoformat())
+    normalized.setdefault('timestamp', datetime.datetime.now().astimezone().isoformat())
     normalized.setdefault('title', normalized.get('type', 'Security Alert'))
     normalized.setdefault('description', normalized.get('title'))
     if not normalized.get('source'):
@@ -462,10 +472,10 @@ def _check_socket_rbac(event_name: str) -> tuple | None:
 def broadcast_alert(alert_type: str, message: str, severity: str = 'medium',
                      source: str = 'System', additional_info: dict = None) -> bool:
     try:
-        timestamp = datetime.datetime.now().isoformat()
+        timestamp = datetime.datetime.now().astimezone().isoformat()
         with alerts_lock:
             alert = {
-                'id': len(alerts) + 1,
+                'id': _next_alert_id(),
                 'type': alert_type,
                 'title': message[:50] + '...' if len(message) > 50 else message,
                 'description': message,
@@ -495,6 +505,9 @@ def security_alert_callback(alert: dict):
         if alert is None:
             return
         alert = _normalize_alert(alert)
+        # Ensure every alert from this path also has a guaranteed unique ID
+        if not alert.get('id'):
+            alert['id'] = _next_alert_id()
         alert_type = alert.get('type')
         with alerts_lock:
             existing_count = sum(1 for a in alerts[:20] if a.get('type') == alert_type)

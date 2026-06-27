@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any
 
 from config.config import DETECTION_PROFILE, DETECTION_DEBUG, DETECTION_WARMUP_SECONDS, NSM_OVERRIDES
+from utils.network_utils import is_private_ip
 
 logger = logging.getLogger(__name__)
 
@@ -266,21 +267,26 @@ class NetworkSecurityMonitor:
         """Reset all alert counters and history - call when clearing alerts"""
         self.alert_history = {}
         self.alert_counts = defaultdict(int)
-        # Restore correct defaultdict types (not plain dicts)
         self.port_scan_tracker = defaultdict(lambda: {'ports': set(), 'timestamps': [], 'flags': defaultdict(int)})
         self.failed_logins = defaultdict(lambda: {'count': 0, 'timestamps': []})
         self.beacon_tracker = defaultdict(list)
-        self.packet_stats = {
-            'total': 0, 'tcp': 0, 'udp': 0, 'icmp': 0, 'dns': 0, 
-            'http': 0, 'https': 0, 'arp': 0, 'other': 0,
-            'malicious': 0, 'suspicious': 0
-        }
-        self.warmup_end = time.time() + DETECTION_WARMUP_SECONDS
+        self.packet_rate = defaultdict(lambda: {'timestamps': [], 'bytes': 0})
+        self.dst_packet_rate = defaultdict(lambda: {'sources': {}, 'timestamps': [], 'bytes': 0})
         self.outbound_transfers = defaultdict(lambda: {'bytes': 0, 'timestamps': [], 'first_seen': 0})
         self.injection_attempts = defaultdict(lambda: {'count': 0, 'timestamps': []})
         self.arp_requests = defaultdict(list)
         self.dns_queries = defaultdict(list)
         self.dns_query_lengths = defaultdict(list)
+        self.attack_logs = []
+        self.session_keys = {}
+        if hasattr(self, 'ip_mac_table'):
+            self.ip_mac_table = {}
+        self.packet_stats = {
+            'total': 0, 'tcp': 0, 'udp': 0, 'icmp': 0, 'dns': 0,
+            'http': 0, 'https': 0, 'arp': 0, 'other': 0,
+            'malicious': 0, 'suspicious': 0
+        }
+        self.warmup_end = time.time() + DETECTION_WARMUP_SECONDS
         logger.info("[Security] NetworkSecurityMonitor counters reset, warmup restarted")
     
     def enable_test_mode(self):
@@ -390,7 +396,7 @@ class NetworkSecurityMonitor:
                     specific_attack_found = True
             
             # ========== COVERT CHANNEL / BEACON DETECTION ==========
-            if protocol == 'ICMP':
+            if protocol in ('TCP', 'UDP', 'ICMP'):
                 covert_alert = self._detect_covert_channel(src_ip, dst_ip, protocol, payload, timestamp)
                 if covert_alert:
                     alerts.append(covert_alert)
@@ -468,12 +474,8 @@ class NetworkSecurityMonitor:
         scan_type = None
         severity = 'medium'
         
-        # NULL Scan detection disabled to avoid false positives on repeated packets.
-        if False:
-            pass
-            
         # XMAS Scan (FIN + PSH + URG = 41)
-        elif tcp_flags == 41 or (tcp_flags & 41) == 41:
+        if tcp_flags == 41 or (tcp_flags & 41) == 41:
             if tracker['flags'].get('XMAS', 0) >= 3 or tracker['flags'].get(f'FLAGS-{tcp_flags}', 0) >= 3:
                 scan_type = 'XMAS Scan'
                 severity = 'high'
@@ -526,13 +528,8 @@ class NetworkSecurityMonitor:
     def _detect_flood(self, src_ip: str, dst_ip: str, protocol: str, packet_size: int, timestamp: float, tcp_flags: int = 0) -> Optional[Dict]:
         """Detect flood-based DoS attacks"""
 
-        # Never flag local/private IPs as flood sources (normal LAN→internet traffic)
-        try:
-            import ipaddress as _ipa
-            if _ipa.ip_address(src_ip).is_private:
-                return None
-        except Exception:
-            pass
+        if is_private_ip(src_ip):
+            return None
 
         tracker = self.packet_rate[src_ip]
         window = self.thresholds['flood_window']
@@ -892,15 +889,6 @@ class NetworkSecurityMonitor:
     def _detect_malformed_packets(self, packet: Dict, tcp_flags: int) -> Optional[Dict]:
         """Detect malformed or suspicious packet structures"""
         
-        # Check for invalid TCP flag combinations disabled due to false positives
-        # if packet.get('protocol', '').upper() == 'TCP':
-        #     # SYN + FIN (invalid)
-        #     if tcp_flags & 3 == 3:  # SYN=2, FIN=1
-        #         pass
-        #     # All flags set (XMAS-like)
-        #     if tcp_flags == 255 or tcp_flags == 63:
-        #         pass
-        
         # Check for LAND attack (src == dst)
         if packet.get('src_ip') == packet.get('dst_ip') and packet.get('src_ip'):
             # Skip localhost
@@ -1072,9 +1060,11 @@ class NetworkSecurityMonitor:
             is_suspicious = any(pattern in payload_bytes.lower() if isinstance(payload_bytes, bytes) else pattern.decode() in payload_bytes.lower() 
                               for pattern in suspicious_patterns)
             
-            if is_suspicious and len(tracker['timestamps']) > 3:
-                tracker['count'] += 1
+            if is_suspicious:
                 tracker['timestamps'].append(timestamp)
+                
+                if len(tracker['timestamps']) > 3:
+                    tracker['count'] += 1
                 
                 if tracker['count'] >= self.thresholds['session_injection_count']:
                     logger.warning(f"[ALERT] Session hijacking attempt from {src_ip}")
@@ -1152,31 +1142,8 @@ class NetworkSecurityMonitor:
         return None
     
     def _is_private_ip(self, ip: str) -> bool:
-        """Check if IP is private/internal"""
-        if not ip:
-            return False
-        try:
-            parts = ip.split('.')
-            if len(parts) != 4:
-                return False
-            first = int(parts[0])
-            second = int(parts[1])
-            
-            # 10.x.x.x
-            if first == 10:
-                return True
-            # 172.16.x.x - 172.31.x.x
-            if first == 172 and 16 <= second <= 31:
-                return True
-            # 192.168.x.x
-            if first == 192 and second == 168:
-                return True
-            # Loopback
-            if first == 127:
-                return True
-            return False
-        except:
-            return False
+        """Check if IP is private/internal (delegates to shared utility)"""
+        return is_private_ip(ip)
     
     # ========== HELPER METHODS ==========
     
@@ -1273,7 +1240,7 @@ class NetworkSecurityMonitor:
             'severity': severity,
             'description': description,
             'source': source,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now().astimezone().isoformat(),
             'evidence': evidence or {},
             'count': self.alert_counts[attack_type]
         }
@@ -1299,7 +1266,6 @@ class NetworkSecurityMonitor:
                 try:
                     self.alert_callback(alert)
                 except Exception as e:
-                    logger.error(f"Error in alert callback: {e}")
                     logger.error(f"[Security] Alert callback failed: {e}")
     
     def _update_stats(self, packet: Dict):

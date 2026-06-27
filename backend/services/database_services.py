@@ -20,6 +20,18 @@ from config.config import DATABASE_URL, DB_ENGINE, PACKET_BUFFER_SIZE, FEATURES
 logger = logging.getLogger(__name__)
 Base = declarative_base()
 
+
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE wildcards (% and _) in user-supplied search values."""
+    if not value:
+        return value
+    return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
+def _like_param(value: str) -> str:
+    """Format a value for safe LIKE queries (escaped, wrapped in %...%)."""
+    return f'%{_escape_like(value)}%'
+
 # ============== DATABASE MODELS ==============
 
 class PacketRecord(Base):
@@ -42,7 +54,7 @@ class PacketRecord(Base):
     def to_dict(self):
         return {
             'id': self.id,
-            'timestamp': self.timestamp.isoformat(),
+            'timestamp': self.timestamp.astimezone().isoformat() if self.timestamp else None,
             'protocol': self.protocol,
             'src_ip': self.src_ip,
             'dst_ip': self.dst_ip,
@@ -77,7 +89,7 @@ class AlertRecord(Base):
         
         return {
             'id': self.id,
-            'timestamp': self.timestamp.isoformat(),
+            'timestamp': self.timestamp.astimezone().isoformat() if self.timestamp else None,
             'alert_type': self.alert_type,
             'severity': self.severity,
             'source_ip': self.source_ip,
@@ -573,15 +585,15 @@ class DatabaseService:
                 if protocol:
                     query = query.filter(PacketRecord.protocol == protocol)
                 if src_ip:
-                    query = query.filter(PacketRecord.src_ip.like(f'%{src_ip}%'))
+                    query = query.filter(PacketRecord.src_ip.like(_like_param(src_ip)))
                 if dst_ip:
-                    query = query.filter(PacketRecord.dst_ip.like(f'%{dst_ip}%'))
+                    query = query.filter(PacketRecord.dst_ip.like(_like_param(dst_ip)))
                 if src_port is not None:
                     query = query.filter(PacketRecord.src_port == src_port)
                 if dst_port is not None:
                     query = query.filter(PacketRecord.dst_port == dst_port)
                 if service:
-                    query = query.filter(PacketRecord.service.like(f'%{service}%'))
+                    query = query.filter(PacketRecord.service.like(_like_param(service)))
                 if tcp_flags is not None:
                     query = query.filter(PacketRecord.tcp_flags == tcp_flags)
                 if min_length is not None:
@@ -589,7 +601,7 @@ class DatabaseService:
                 if max_length is not None:
                     query = query.filter(PacketRecord.length <= max_length)
                 if search:
-                    search_pattern = f'%{search}%'
+                    search_pattern = _like_param(search)
                     query = query.filter(
                         or_(
                             PacketRecord.src_ip.like(search_pattern),
@@ -616,6 +628,17 @@ class DatabaseService:
 
         try:
             with self.get_session() as session:
+                ts = alert_info.get('timestamp')
+                if isinstance(ts, (int, float)):
+                    timestamp_param = datetime.fromtimestamp(ts)
+                elif isinstance(ts, str):
+                    try:
+                        timestamp_param = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                    except ValueError:
+                        timestamp_param = None
+                else:
+                    timestamp_param = ts
+
                 alert = AlertRecord(
                     alert_type=alert_info.get('type'),
                     severity=alert_info.get('severity', 'medium'),
@@ -625,6 +648,7 @@ class DatabaseService:
                     description=alert_info.get('description'),
                     evidence=json.dumps(alert_info.get('evidence', {})),
                     org_id=alert_info.get('org_id'),
+                    timestamp=timestamp_param,
                 )
                 session.add(alert)
                 return True
@@ -677,15 +701,15 @@ class DatabaseService:
                 if alert_type:
                     query = query.filter(AlertRecord.alert_type == alert_type)
                 if source_ip:
-                    query = query.filter(AlertRecord.source_ip.like(f'%{source_ip}%'))
+                    query = query.filter(AlertRecord.source_ip.like(_like_param(source_ip)))
                 if destination_ip:
-                    query = query.filter(AlertRecord.destination_ip.like(f'%{destination_ip}%'))
+                    query = query.filter(AlertRecord.destination_ip.like(_like_param(destination_ip)))
                 if title:
-                    query = query.filter(AlertRecord.title.like(f'%{title}%'))
+                    query = query.filter(AlertRecord.title.like(_like_param(title)))
                 if resolved is not None:
                     query = query.filter(AlertRecord.resolved == resolved)
                 if search:
-                    search_pattern = f'%{search}%'
+                    search_pattern = _like_param(search)
                     query = query.filter(
                         or_(
                             AlertRecord.title.like(search_pattern),
@@ -848,15 +872,15 @@ class DatabaseService:
                 query = session.query(DeviceRecord)
 
                 if ip_address:
-                    query = query.filter(DeviceRecord.ip_address.like(f'%{ip_address}%'))
+                    query = query.filter(DeviceRecord.ip_address.like(_like_param(ip_address)))
                 if mac_address:
-                    query = query.filter(DeviceRecord.mac_address.like(f'%{mac_address}%'))
+                    query = query.filter(DeviceRecord.mac_address.like(_like_param(mac_address)))
                 if hostname:
-                    query = query.filter(DeviceRecord.hostname.like(f'%{hostname}%'))
+                    query = query.filter(DeviceRecord.hostname.like(_like_param(hostname)))
                 if device_type:
                     query = query.filter(DeviceRecord.device_type == device_type)
                 if search:
-                    search_pattern = f'%{search}%'
+                    search_pattern = _like_param(search)
                     query = query.filter(
                         or_(
                             DeviceRecord.ip_address.like(search_pattern),
@@ -1853,15 +1877,15 @@ class DatabaseService:
                 if kwargs.get('protocol'):
                     query = query.filter(PacketRecord.protocol == kwargs['protocol'])
                 if kwargs.get('src_ip'):
-                    query = query.filter(PacketRecord.src_ip.like(f'%{kwargs["src_ip"]}%'))
+                    query = query.filter(PacketRecord.src_ip.like(_like_param(kwargs["src_ip"])))
                 if kwargs.get('dst_ip'):
-                    query = query.filter(PacketRecord.dst_ip.like(f'%{kwargs["dst_ip"]}%'))
+                    query = query.filter(PacketRecord.dst_ip.like(_like_param(kwargs["dst_ip"])))
                 if kwargs.get('src_port') is not None:
                     query = query.filter(PacketRecord.src_port == kwargs['src_port'])
                 if kwargs.get('dst_port') is not None:
                     query = query.filter(PacketRecord.dst_port == kwargs['dst_port'])
                 if kwargs.get('service'):
-                    query = query.filter(PacketRecord.service.like(f'%{kwargs["service"]}%'))
+                    query = query.filter(PacketRecord.service.like(_like_param(kwargs["service"])))
                 if kwargs.get('tcp_flags') is not None:
                     query = query.filter(PacketRecord.tcp_flags == kwargs['tcp_flags'])
                 if kwargs.get('min_length') is not None:
@@ -1869,7 +1893,7 @@ class DatabaseService:
                 if kwargs.get('max_length') is not None:
                     query = query.filter(PacketRecord.length <= kwargs['max_length'])
                 if kwargs.get('search'):
-                    sp = f'%{kwargs["search"]}%'
+                    sp = _like_param(kwargs["search"])
                     query = query.filter(or_(
                         PacketRecord.src_ip.like(sp),
                         PacketRecord.dst_ip.like(sp),
@@ -1902,15 +1926,15 @@ class DatabaseService:
                 if kwargs.get('alert_type'):
                     query = query.filter(AlertRecord.alert_type == kwargs['alert_type'])
                 if kwargs.get('source_ip'):
-                    query = query.filter(AlertRecord.source_ip.like(f'%{kwargs["source_ip"]}%'))
+                    query = query.filter(AlertRecord.source_ip.like(_like_param(kwargs["source_ip"])))
                 if kwargs.get('destination_ip'):
-                    query = query.filter(AlertRecord.destination_ip.like(f'%{kwargs["destination_ip"]}%'))
+                    query = query.filter(AlertRecord.destination_ip.like(_like_param(kwargs["destination_ip"])))
                 if kwargs.get('title'):
-                    query = query.filter(AlertRecord.title.like(f'%{kwargs["title"]}%'))
+                    query = query.filter(AlertRecord.title.like(_like_param(kwargs["title"])))
                 if kwargs.get('resolved') is not None:
                     query = query.filter(AlertRecord.resolved == kwargs['resolved'])
                 if kwargs.get('search'):
-                    sp = f'%{kwargs["search"]}%'
+                    sp = _like_param(kwargs["search"])
                     query = query.filter(or_(
                         AlertRecord.title.like(sp),
                         AlertRecord.description.like(sp),
@@ -1936,15 +1960,15 @@ class DatabaseService:
             with self.get_session() as session:
                 query = session.query(DeviceRecord).filter(DeviceRecord.org_id == org_id)
                 if kwargs.get('ip_address'):
-                    query = query.filter(DeviceRecord.ip_address.like(f'%{kwargs["ip_address"]}%'))
+                    query = query.filter(DeviceRecord.ip_address.like(_like_param(kwargs["ip_address"])))
                 if kwargs.get('mac_address'):
-                    query = query.filter(DeviceRecord.mac_address.like(f'%{kwargs["mac_address"]}%'))
+                    query = query.filter(DeviceRecord.mac_address.like(_like_param(kwargs["mac_address"])))
                 if kwargs.get('hostname'):
-                    query = query.filter(DeviceRecord.hostname.like(f'%{kwargs["hostname"]}%'))
+                    query = query.filter(DeviceRecord.hostname.like(_like_param(kwargs["hostname"])))
                 if kwargs.get('device_type'):
                     query = query.filter(DeviceRecord.device_type == kwargs['device_type'])
                 if kwargs.get('search'):
-                    sp = f'%{kwargs["search"]}%'
+                    sp = _like_param(kwargs["search"])
                     query = query.filter(or_(
                         DeviceRecord.ip_address.like(sp),
                         DeviceRecord.mac_address.like(sp),
