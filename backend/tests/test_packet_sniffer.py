@@ -4,7 +4,8 @@ from packet_sniffer import classify_packet_service, match_ip_service, PacketSnif
 
 def test_match_ip_service():
     assert match_ip_service("142.250.190.46") == "google"
-    assert match_ip_service("1.1.1.1") is None
+    assert match_ip_service("1.1.1.1") == "cloudflare"
+    assert match_ip_service("9.9.9.9") is None
 
 def test_classify_packet_service_dns():
     pkt = IP(src="192.168.1.1", dst="8.8.8.8") / UDP(sport=12345, dport=53) / DNS(rd=1, qr=0, qd=DNSQR(qname="www.youtube.com"))

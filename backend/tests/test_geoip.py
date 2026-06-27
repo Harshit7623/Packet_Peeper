@@ -142,7 +142,8 @@ def test_reload_nonexistent_path():
     original_reader = geoip_service._geoip_reader
     original_available = geoip_service._geoip_available
 
-    geoip_service.reload('/nonexistent/path/to/db.mmdb')
+    with patch('os.path.isfile', return_value=False):
+        geoip_service.reload('/nonexistent/path/to/db.mmdb')
 
     assert geoip_service._geoip_available is False
     assert geoip_service._geoip_reader is None
