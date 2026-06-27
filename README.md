@@ -40,7 +40,7 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 - **Database Persistence**: SQLite integration for robust storage of user profiles and application state.
 
 ### Network Security & Threat Detection
-![Security Alerts Live Detection](docs/assets/Screenshot_20260625_224839.png)
+![Security Alerts Live Detection](docs/assets/security_demo.gif)
 - **Real-time Security Monitoring**: Analyze packets for potential security threats
 - **Attack Detection**:
   - Port Scan Detection: Identify suspicious port scanning attempts
