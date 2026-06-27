@@ -108,14 +108,13 @@ export default function Alerts() {
       setDismissingId(null);
       return;
     }
-    setTimeout(() => {
-      setAlerts(alerts.filter(a => a.id !== alertId));
-      setDismissingId(null);
-    }, 300);
+    setAlerts((prev: any[]) => prev.filter(a => a.id !== alertId));
+    setDismissingId(null);
   };
 
   const handleClearAll = async () => {
-    if (alerts.length === 0) return;
+    const totalVisible = displayAlerts.length;
+    if (totalVisible === 0 && alerts.length === 0) return;
 
     const confirmed = window.confirm('Are you sure you want to clear all alerts?');
     if (!confirmed) return;
@@ -126,15 +125,21 @@ export default function Alerts() {
     } catch (err: any) {
       if (err?.status === 401) {
         alert('Session expired. Please log in again.');
+      } else if (err?.status === 403) {
+        alert('Permission denied. Admin role required to clear alerts.');
       } else {
         console.error('Failed to clear alerts:', err);
-        alert('Failed to clear alerts. Please try again.');
+        alert(`Failed to clear alerts: ${err?.message || 'Unknown error'}`);
       }
       setIsClearing(false);
       return;
     }
     clearAlerts();
     setAlerts([]);
+    setServerAlerts([]);
+    setServerTotal(0);
+    setUseServerFilter(false);
+    clearFilters();
     setIsClearing(false);
   };
 
@@ -259,7 +264,7 @@ export default function Alerts() {
               size="sm"
               className="rounded-full text-destructive hover:text-destructive border-destructive/30 hover:border-destructive/50 disabled:opacity-50"
               onClick={handleClearAll}
-              disabled={isClearing || alerts.length === 0}
+              disabled={isClearing || (alerts.length === 0 && serverAlerts.length === 0 && displayAlerts.length === 0)}
             >
               {isClearing ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Clearing...</>
@@ -484,7 +489,7 @@ export default function Alerts() {
 
                 return (
                   <motion.div
-                    key={alert.id}
+                    key={`alert-${alert.id ?? index}-${alert.type ?? ''}-${index}`}
                     initial={{ opacity: 0, x: -50, height: 0 }}
                     animate={{
                       opacity: isBeingDismissed ? 0 : 1,

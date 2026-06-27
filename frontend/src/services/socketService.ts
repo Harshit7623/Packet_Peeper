@@ -13,9 +13,18 @@ class SocketService {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private backendUrl: string;
+  private _alertsMuted = false;
 
-  constructor(backendUrl: string = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000') {
-    this.backendUrl = backendUrl;
+  constructor(backendUrl?: string) {
+    if (backendUrl) {
+      this.backendUrl = backendUrl;
+    } else if (import.meta.env.VITE_BACKEND_URL) {
+      this.backendUrl = import.meta.env.VITE_BACKEND_URL;
+    } else {
+      // Auto-detect: use https/wss when page is served over HTTPS
+      const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:';
+      this.backendUrl = isSecure ? 'https://localhost:5000' : 'http://localhost:5000';
+    }
     console.log(`📡 Using backend URL: ${this.backendUrl}`);
   }
 
@@ -96,13 +105,13 @@ class SocketService {
 
     // Alert events
     this.socket.on('new_alert', (alert: any) => {
-      console.log('🚨 New alert received:', alert);
+      if (this._alertsMuted) return;
       useMonitorStore.getState().addAlert(alert);
     });
 
     // Security-specific alerts
     this.socket.on('security_alert', (alert: any) => {
-      console.log('🛡️ Security alert received:', alert);
+      if (this._alertsMuted) return;
       useMonitorStore.getState().addAlert(alert);
     });
 
@@ -134,6 +143,10 @@ class SocketService {
     // Initial alerts sync on connection
     this.socket.on('alerts_sync', (alertsList: any[]) => {
       useMonitorStore.getState().setAlerts(alertsList);
+      if (alertsList.length === 0) {
+        this._alertsMuted = true;
+        setTimeout(() => { this._alertsMuted = false; }, 1500);
+      }
     });
 
     // Logs list

@@ -183,59 +183,61 @@ export default function PayloadInspectionPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold">Recent Packets</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1 max-h-[600px] overflow-y-auto">
-                {loading && packets.length === 0 ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 size={20} className="animate-spin text-muted-foreground" />
-                  </div>
-                ) : packets.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-8">
-                    No packets captured yet. Start monitoring first.
-                  </p>
-                ) : (
-                  packets.map((pkt) => (
-                    <button
-                      key={pkt.index}
-                      onClick={() => pkt.has_raw && inspectPacket(pkt.index)}
-                      disabled={!pkt.has_raw}
-                      className={cn(
-                        "w-full text-left p-2 rounded border border-border/20 hover:border-primary/30 transition-colors",
-                        selected?.packet_id === pkt.index && "border-primary/50 bg-primary/5",
-                        !pkt.has_raw && "opacity-50 cursor-not-allowed"
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px] font-mono",
-                              pkt.protocol === "TCP" && "border-blue-500/30 text-blue-400",
-                              pkt.protocol === "UDP" && "border-green-500/30 text-green-400",
-                              pkt.protocol === "ICMP" && "border-yellow-500/30 text-yellow-400",
-                              pkt.protocol === "ARP" && "border-purple-500/30 text-purple-400"
-                            )}
-                          >
-                            {pkt.protocol}
-                          </Badge>
-                          <span className="text-[11px] font-mono text-foreground truncate">
-                            {pkt.src_ip}:{pkt.src_port} → {pkt.dst_ip}:{pkt.dst_port}
-                          </span>
-                        </div>
-                        {pkt.has_raw && (
-                          <span className="text-[10px] text-muted-foreground font-mono">
-                            {pkt.raw_size}B
-                          </span>
+              <CardContent className="space-y-1 max-h-[600px] overflow-auto">
+                <div className="w-full min-w-max space-y-1">
+                  {loading && packets.length === 0 ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 size={20} className="animate-spin text-muted-foreground" />
+                    </div>
+                  ) : packets.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-8">
+                      No packets captured yet. Start monitoring first.
+                    </p>
+                  ) : (
+                    packets.map((pkt) => (
+                      <button
+                        key={pkt.index}
+                        onClick={() => pkt.has_raw && inspectPacket(pkt.index)}
+                        disabled={!pkt.has_raw}
+                        className={cn(
+                          "w-full text-left p-2 rounded border border-border/20 hover:border-primary/30 transition-colors block",
+                          selected?.packet_id === pkt.index && "border-primary/50 bg-primary/5",
+                          !pkt.has_raw && "opacity-50 cursor-not-allowed"
                         )}
-                      </div>
-                      {pkt.service && (
-                        <div className="text-[10px] text-muted-foreground mt-1 truncate">
-                          {pkt.service}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "text-[10px] font-mono whitespace-nowrap",
+                                pkt.protocol === "TCP" && "border-blue-500/30 text-blue-400",
+                                pkt.protocol === "UDP" && "border-green-500/30 text-green-400",
+                                pkt.protocol === "ICMP" && "border-yellow-500/30 text-yellow-400",
+                                pkt.protocol === "ARP" && "border-purple-500/30 text-purple-400"
+                              )}
+                            >
+                              {pkt.protocol}
+                            </Badge>
+                            <span className="text-[11px] font-mono text-foreground whitespace-nowrap">
+                              {pkt.src_ip}:{pkt.src_port} → {pkt.dst_ip}:{pkt.dst_port}
+                            </span>
+                          </div>
+                          {pkt.has_raw && (
+                            <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">
+                              {pkt.raw_size}B
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </button>
-                  ))
-                )}
+                        {pkt.service && (
+                          <div className="text-[10px] text-muted-foreground mt-1 whitespace-nowrap">
+                            {pkt.service}
+                          </div>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
               </CardContent>
             </Card>
           </div>

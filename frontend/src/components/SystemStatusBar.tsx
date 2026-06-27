@@ -132,7 +132,7 @@ export function SystemStatusBar() {
             </motion.div>
             
             <div className="flex-1">
-              <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <span className="text-sm font-semibold text-foreground flex items-center gap-2">
                 AI Assistant
                 {aiStatus?.is_fallback ? (
                   <Badge variant="outline" className="bg-yellow-500/10 border-yellow-500/30 text-yellow-300 text-xs">
@@ -143,7 +143,7 @@ export function SystemStatusBar() {
                     Connected
                   </Badge>
                 )}
-              </p>
+              </span>
               <p className="text-xs text-muted-foreground mt-1">
                 {aiStatus?.provider && (
                   <>
@@ -176,7 +176,7 @@ export function SystemStatusBar() {
             </motion.div>
             
             <div>
-              <p className="text-sm font-semibold text-foreground">Detection Profile</p>
+              <span className="text-sm font-semibold text-foreground">Detection Profile</span>
               <p className="text-xs text-muted-foreground mt-1">
                 Sensitivity: <span className="text-foreground font-medium capitalize">{detectionProfile?.current_profile}</span>
               </p>

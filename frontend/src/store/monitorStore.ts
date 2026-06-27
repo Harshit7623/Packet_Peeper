@@ -183,12 +183,26 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   // Alert methods
   addAlert: (alert: Alert) =>
     set((state) => {
-      const maxAlerts = 20; // Limit to 20 alerts as per config
+      const maxAlerts = 50;
+      // Deduplicate: skip if same ID already exists
+      if (alert.id && state.alerts.some((a) => a.id === alert.id)) {
+        return {};
+      }
       const newAlerts = [alert, ...state.alerts].slice(0, maxAlerts);
       return { alerts: newAlerts };
     }),
 
-  setAlerts: (alerts: Alert[]) => set({ alerts: alerts.slice(0, 20) }),
+  setAlerts: (alerts: Alert[]) => {
+    // Deduplicate by ID before storing
+    const seen = new Set<any>();
+    const unique = alerts.filter((a) => {
+      const key = a.id ?? JSON.stringify(a);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    set({ alerts: unique.slice(0, 50) });
+  },
 
   clearAlerts: () => set({ alerts: [] }),
 

@@ -11,6 +11,7 @@ import { apiService } from "@/services/apiService";
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import "leaflet/dist/leaflet.css";
 
 interface ThreatPoint {
   ip: string;
@@ -39,7 +40,17 @@ function ThreatMapLeaflet({ threats }: { threats: ThreatPoint[] }) {
 
   useEffect(() => {
     import('react-leaflet').then((mod) => {
-      const { MapContainer, TileLayer, CircleMarker, Popup } = mod;
+      const { MapContainer, TileLayer, CircleMarker, Popup, useMap } = mod;
+      const MapController = () => {
+        const map = useMap();
+        useEffect(() => {
+          const timer = setTimeout(() => {
+            map.invalidateSize();
+          }, 250);
+          return () => clearTimeout(timer);
+        }, [map]);
+        return null;
+      };
       const el = (
         <MapContainer
           center={[20, 0]}
@@ -47,6 +58,7 @@ function ThreatMapLeaflet({ threats }: { threats: ThreatPoint[] }) {
           style={{ height: "100%", width: "100%", background: "#0a0f1a" }}
           className="rounded-lg"
         >
+          <MapController />
           <TileLayer
             attribution='&copy; <a href="https://carto.com/">CARTO</a>'
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"

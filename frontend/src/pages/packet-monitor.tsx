@@ -59,6 +59,10 @@ export default function PacketMonitor() {
       size: p.length,
       status: 'Safe',
       destination_role: p.destination_role || null,
+      country: p.country || null,
+      city: p.city || null,
+      country_code: p.country_code || null,
+      geo_direction: p.geo_direction || 'Src',
     })));
   }, [packets]);
 
@@ -117,7 +121,12 @@ export default function PacketMonitor() {
         port: p.dst_port,
         service: p.service || 'Unknown',
         size: p.length,
-        status: 'Safe'
+        status: 'Safe',
+        destination_role: p.destination_role || null,
+        country: p.country || null,
+        city: p.city || null,
+        country_code: p.country_code || null,
+        geo_direction: p.geo_direction || 'Src',
       }))
     : localPackets.filter(p =>
         p.source?.includes(searchTerm) ||
@@ -391,6 +400,7 @@ export default function PacketMonitor() {
                     <th className="px-6 py-4">Protocol</th>
                     <th className="px-6 py-4">Service</th>
                     <th className="px-6 py-4">Dest Role</th>
+                    <th className="px-6 py-4">Geo (Remote)</th>
                     <th className="px-6 py-4">Size</th>
                     <th className="px-6 py-4 text-center">Status</th>
                   </tr>
@@ -454,6 +464,18 @@ export default function PacketMonitor() {
                           )}
                           {!packet.destination_role && (
                             <span className="text-[10px] text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-3">
+                          {packet.country ? (
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-foreground bg-white/5 px-2.5 py-1 rounded-lg border border-border/50 shadow-sm">
+                              <Globe size={12} className="text-primary" />
+                              {packet.city ? `${packet.city}, ${packet.country}` : packet.country}
+                              {packet.country_code && <span className="text-[10px] text-muted-foreground font-mono ml-0.5">({packet.country_code})</span>}
+                              <span className="text-[9px] bg-primary/10 text-primary px-1 py-0.5 rounded ml-1 font-bold">{packet.geo_direction}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground font-mono">Local / Unknown</span>
                           )}
                         </td>
                         <td className="px-6 py-3">
