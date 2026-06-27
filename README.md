@@ -1,5 +1,6 @@
 # Packet Peeper - Advanced Network Security Monitor
 
+![CI - Pytest](https://github.com/Harshit7623/Packet_Peeper/actions/workflows/pytest.yml/badge.svg)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
 ![React](https://img.shields.io/badge/react-19-61dafb.svg?logo=react)
@@ -7,6 +8,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 Packet Peeper is a comprehensive network security monitoring and packet analysis platform that provides real-time monitoring of network traffic, advanced threat detection, and device tracking. It combines powerful packet capture capabilities with intelligent security analysis and a beautiful, intuitive web interface.
+
+![Packet Monitor Dashboard](docs/assets/Screenshot_20260625_224906.png)
 
 > 📚 **Deep Dive:** For detailed system workflows, packet processing pipelines, and authentication sequence diagrams, please refer to the [System Architecture Guide](ARCHITECTURE.md).
 
@@ -37,6 +40,7 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 - **Database Persistence**: SQLite integration for robust storage of user profiles and application state.
 
 ### Network Security & Threat Detection
+![Security Alerts Live Detection](docs/assets/Screenshot_20260625_224839.png)
 - **Real-time Security Monitoring**: Analyze packets for potential security threats
 - **Attack Detection**:
   - Port Scan Detection: Identify suspicious port scanning attempts
@@ -48,6 +52,7 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 - **Detailed Evidence**: Comprehensive evidence collection for each detected threat
 
 ### Device & Network Management
+![Connected Devices Topology](docs/assets/devices_demo.gif)
 - **Active Device Detection**: Real-time discovery and tracking of devices on the network
 - **Device Information**: 
   - IP Address detection
@@ -60,6 +65,7 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 - **Device Statistics**: Real-time packet and byte counters per device
 
 ### Traffic Analysis & Monitoring
+![Traffic Analysis & Top Talkers](docs/assets/Screenshot_20260625_225212.png)
 - **Network Statistics**: Comprehensive bandwidth and traffic analysis
   - Current bandwidth usage
   - Peak bandwidth tracking
@@ -70,6 +76,7 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
 - **Bandwidth History**: Time-series bandwidth data for trend analysis
 
 ### System & Performance Monitoring
+![System Core Health & Resources](docs/assets/Screenshot_20260625_225126.png)
 - **System Resource Monitoring**:
   - CPU usage tracking
   - Memory usage monitoring
@@ -80,6 +87,7 @@ Packet Peeper is a comprehensive network security monitoring and packet analysis
   - Packet loss percentage tracking
 
 ### Web Interface & Visualization
+![Command Center Overview](docs/assets/Screenshot_20260625_223747.png)
 - **Modern React Dashboard**: Clean, responsive UI with multiple views
 - **Real-time Updates**: WebSocket-based live updates (200ms refresh rate)
 - **Multiple Dashboard Pages**:
@@ -108,6 +116,7 @@ NetworkSnifferr/
 │   ├── services/                   # Authentication & Database services
 │   ├── tests/                      # Pytest test suites
 │   └── requirements.txt
+├── core_sniffer_rs/                # Experimental Rust packet-capture core (PyO3/pcap/pnet)
 ├── desktop/                        # Electron desktop wrapper
 ├── docs/                           # Detailed documentation
 ├── frontend/                       # React + Vite frontend
@@ -364,6 +373,14 @@ Service classification is based on domains and IP ranges:
 - Automatic reconnection handling
 - Fallback to polling mode
 
+## Performance Core (Experimental)
+
+The repository contains an experimental native systems-programming module located in `core_sniffer_rs/`. This module represents in-progress performance work designed to explore high-throughput packet handling directly in Rust:
+
+- **Native Capture & Parsing**: Leverages `pcap` and `pnet` to capture and dissect Ethernet, IPv4, TCP, UDP, and ICMP frames at native speed.
+- **Python FFI Bridge**: Uses `PyO3` to create a compiled Python extension (`RustSniffer`) that exposes non-blocking capture control methods and invokes a Python callback with zero-copy JSON strings.
+- **Integration Status**: This module is currently experimental and serves as an architectural proof-of-concept for future scaling. It is not yet wired into the active `packet_sniffer.py` production pipeline, allowing the current Scapy implementation to maintain broad compatibility while the native core is being refined.
+
 ## Development
 
 ### Backend Development
@@ -405,7 +422,7 @@ To add new dashboard pages:
 
 - **Administrator Required**: Packet capture requires elevated privileges
 - **Local Network Only**: Device detection limited to configured network range
-- **No Encryption**: Use on trusted networks only (WebSocket in development)
+- **No Encryption**: Use on trusted networks only (WebSocket in development). Upgrading WebSocket communication to secure WSS/TLS encryption is actively on the roadmap.
 - **Local User Authentication**: Implemented and active; requires setup via backend.
 - **Service Fingerprinting**: Based on public IP ranges and domain databases
 
@@ -496,18 +513,18 @@ pip install -r backend/requirements.txt
 
 - [x] Database persistence (SQLite/PostgreSQL integration)
 - [x] User authentication and authorization
-- [x] Multi-user support
+- [x] Multi-user support & RBAC
 - [x] Advanced filtering and search
-- [x] Machine learning-based anomaly detection
+- [x] Machine learning-based anomaly detection (`ML Detect`)
+- [x] Historical data analysis (`History` & `Insights`)
+- [x] Custom alert rules builder (`Rules`)
+- [x] Integration with SIEM systems (`SIEM`)
+- [x] Deep inspection of plaintext protocol payloads (`Payload`)
+- [x] Protocol dissection plugins
+- [x] GeoIP-based threat mapping (`Threat Map`)
 - [ ] Mobile app support
 - [ ] Cloud deployment support
-- [x] Advanced encryption for WebSocket
-- [x] Historical data analysis
-- [x] Custom alert rules builder
-- [x] Integration with SIEM systems
-- [x] Packet payload inspection (with encryption bypass for testing)
-- [x] Protocol dissection plugins
-- [x] GeoIP-based threat mapping
+- [ ] Advanced encryption for WebSocket (WSS/TLS)
 
 ## Contributing
 
@@ -545,4 +562,4 @@ For issues, questions, or suggestions:
 
 ## Author
 
-**Harshit7623** - GitHub: https://github.com/Harshit7623/Packet_Peeper 
+**Harshit7623** - GitHub: https://github.com/Harshit7623/Packet_Peeper
