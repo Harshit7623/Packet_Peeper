@@ -26,5 +26,7 @@ jobs:
         pip install pytest pytest-cov
 
     - name: Run test suite
+      env:
+        DB_ENGINE: sqlite
       run: |
         PYTHONPATH=backend pytest backend/tests/ --doctest-modules --junitxml=junit/test-results.xml
